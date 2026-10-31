@@ -18,19 +18,45 @@ npm run db:push
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000), create an account, and add a node with `localhost` as its hostname. Copy its node ID from the Nodes screen and set `MEDIA_SERVER_ID` in `.env`. Keep the generated `.env` private.
-
-Adding a node creates a configuration record; it does not provision a cloud VM. The commands below install the media services for the registered node.
-
-## Start local streaming services
-
-With the host development server still running:
+Open [localhost:3000](http://localhost:3000) and create an account. In a second terminal, start the durable installer:
 
 ```sh
-docker compose -f compose.yml -f infra/dev.yml --profile streaming up -d --build --no-deps media worker srtla
+npm run installer
 ```
 
-Wait for the node to show Online. Create a channel, copy its encoder connection details, and add your provider ingest URLs and stream keys. Enable every destination you want and press Go live. The worker starts a continuous fallback program and relays it to every enabled destination; incoming live media replaces fallback after five healthy seconds.
+In **Nodes → Add node**, choose **Install locally** or **Install on a remote server**. No manual node IDs or database configuration are needed for managed nodes. Keep `.env` private.
+
+## Install locally
+
+The installer uses the current Docker host. Docker Engine/Desktop and Compose must be available to the installer process. Enable local setup for your trusted account in `.env`, then restart the app and installer:
+
+```dotenv
+ENABLE_LOCAL_INSTALL=1
+LOCAL_INSTALL_ADMIN_EMAILS=you@example.com
+```
+
+The allowlist is separate from workspace roles: public account registration does not grant access to the app server’s Docker host. Only listed workspace administrators can start a local install.
+
+Choose **Install locally**, enter the public hostname/IP that your encoder will use, review the control-panel URL, and press **Install locally**. During development, a `localhost` control URL is mapped to `host.docker.internal` for the containerized agent. The public ingest hostname should be reachable from your encoder.
+
+## Install on a remote server over SSH
+
+1. Deploy the control panel at a publicly reachable **HTTPS** origin with a valid certificate. Set `BETTER_AUTH_URL` and optionally `NODE_CONTROL_URL` to that origin. Remote nodes need outbound HTTPS to this URL.
+2. Prepare a Linux host with internet access and an SSH account with root or **passwordless sudo**. The installer machine must be able to reach its SSH port. Docker installation is automatic on Debian/Ubuntu when missing; existing Docker installations are reused and missing Compose/Buildx plugins are installed from Docker’s official CLI image.
+3. Open **Nodes → Add node → Install on a remote server**. Enter the node name, public ingest address, control-panel URL, SSH host/port/username, and a password or private key. Encrypted private keys support passphrases.
+4. Press **Check SSH connection**. Compare the displayed host fingerprint with your hosting console or the server’s SSH host-key fingerprints. No installation commands execute before verification.
+5. Press **Trust host & install**. The background installer uploads a private bundle, checks machine ownership, installs/builds the services, and waits for the first healthy heartbeat. The modal shows the actual step and recent command output.
+6. When the node is ready, create a channel and select it. Add provider ingest URLs and stream keys, enable destinations, and press **Go live**.
+
+Allow **TCP 1935**, **UDP 8890**, and **UDP 5000** on the node’s firewall/security group for your encoders. SSH must be reachable from the installer. Management, database, and HLS ports do not need public exposure; configuration, reports, and preview travel back through authenticated outbound requests.
+
+The wizard saves partial drafts and credentials automatically and flushes changes when closed. **Nodes → Resume setup** reopens the saved step after a refresh. Running jobs continue independently of the modal and web process. SSH credentials are encrypted in PostgreSQL, never returned to the browser, and deleted after installation succeeds. Before installation starts, a draft can be discarded; an installation that has started retains its identity for safe retries.
+
+Only **one managed node per Docker host** is allowed. An atomic Docker-volume claim, fixed Compose project, database machine identity, and local reservation prevent duplicate registrations from replacing a running node—even through a different SSH hostname. Resume the existing installation to retry a failed build. Do not remove the identity volume to bypass ownership checks on a live server.
+
+The app installs onto a server you provide; cloud VM creation is separate. SRTLA remains experimental.
+
+## Streaming behavior
 
 - RTMP ingest: TCP 1935.
 - SRT ingest: UDP 8890.
@@ -51,13 +77,29 @@ Twitch, Kick, and custom endpoints receive an output disconnect when the session
 
 ## Full Docker deployment
 
-Set `BETTER_AUTH_URL` to the website’s public HTTPS origin, configure a TLS reverse proxy, and use the registered node ID in `.env`. After initializing the database:
+Set `BETTER_AUTH_URL` and `NODE_CONTROL_URL` to the website’s public HTTPS origin and initialize the schema. Start the control panel and installer:
 
 ```sh
-docker compose --profile streaming up -d --build
+docker compose up -d --build db web installer
 ```
 
-The application, worker, and media router currently share a private deployment network and trust boundary. Run the media stack alongside its app/database deployment; registering arbitrary remote hosts does not automatically install or connect them. Preview is configured for `MEDIA_SERVER_ID`. Multiple node scheduling, per-node credentials, remote provisioning, RTMPS ingest certificates, and regional routing are follow-on work.
+The installer container includes the source bundle and Docker CLI, and mounts the host Docker socket plus a private persistent installer volume. That socket gives the installer host-level Docker access; keep the installer and local allowlist limited to trusted administrators. The streaming stack is deployed separately by the wizard as the `irl-node` Compose project on each chosen host. Avoid starting the old manual streaming profile on the same host because its ingest ports overlap.
+
+For a reverse proxy, allow at least **10 MiB request bodies** and **30-second upstream timeouts** on the app routes. Node preview uploads are bounded to 8 MiB per segment. For nginx, include `client_max_body_size 10m;` and `proxy_read_timeout 30s;` in the application location/server configuration. Preserve the public Host and forwarded HTTPS headers.
+
+Managed nodes receive scoped tokens, assigned channel configuration, and destination keys over HTTPS. They receive no database URL or application encryption key. MediaMTX authentication is handled by their private agent. Preview uses short-lived, bounded request/response tickets in PostgreSQL, so remote nodes require no inbound preview server; this transport is intended for operator previews, not public audience playback.
+
+A node can continue through brief control-panel interruptions. After 30 seconds without successful control synchronization, it stops outgoing media processes rather than continuing an uncontrollable session. Agent leases prevent competing processes from controlling the same node. Existing legacy database-connected workers remain supported for development; new wizard installations use the outbound agent.
+
+Useful troubleshooting commands on a node:
+
+```sh
+docker logs --tail 100 irl-node-worker-1
+docker logs --tail 100 irl-node-media-1
+docker ps --filter label=com.docker.compose.project=irl-node
+```
+
+If setup waits for a heartbeat, check the public app URL, certificate trust, outbound connectivity, and these logs. If ports are occupied, stop the old manual media stack before retrying. Failed builds retain the same node identity and can be retried from the wizard. Native/local installations require a running Docker daemon; remote Docker bootstrapping uses the host’s systemd service.
 
 Destination credentials use AES-256-GCM with `ENCRYPTION_KEY`. Back up that key with your database; changing it makes existing destination keys unreadable. Ingest keys are private bearer credentials, visible only to workspace members. The worker necessarily passes provider URLs to FFmpeg processes, so media-host administrators remain trusted.
 
@@ -89,5 +131,7 @@ npx tsx scripts/cleanup-media-fixture.ts
 ```
 
 The API integration suite creates isolated accounts and cleans them up unless fixture retention is enabled. Media tests use a host FFmpeg encoder for RTMP and a containerized encoder for SRT, avoiding Docker Desktop UDP forwarding differences. They use local sink endpoints; they do not broadcast to real platforms. Never use the test sink configuration for public deployment.
+
+Provisioning and remote-media integration tests additionally require a disposable Docker host and SSH target; see [validation notes](docs/VALIDATION.md).
 
 See [the implementation plan](docs/PLAN.md) for architecture, current scope, and remaining milestones.

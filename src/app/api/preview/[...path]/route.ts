@@ -1,3 +1,7 @@
+import { db } from '@/lib/db';
+import { mediaServer } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { remotePreview } from '@/lib/nodes/preview';
 import { ApiError, requireChannel } from '@/lib/access';
 export const dynamic = 'force-dynamic';
 export async function GET(_request: Request, { params }: { params: Promise<{ path: string[] }> }) {
@@ -9,6 +13,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pat
     )
       return new Response(null, { status: 400 });
     const ctx = await requireChannel(channelId);
+    const node = await db.query.mediaServer.findFirst({
+      where: eq(mediaServer.id, ctx.channel.serverId),
+    });
+    if (node?.agentTokenHash)
+      return remotePreview(node.id, `program_${channelId}/${segments.join('/')}`);
     if (ctx.channel.serverId !== process.env.MEDIA_SERVER_ID)
       return new Response('Preview is not configured for this server.', { status: 503 });
     const url = new URL(
