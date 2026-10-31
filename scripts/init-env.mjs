@@ -12,5 +12,5 @@ writeFileSync(
   { mode: 0o600, flag: 'wx' },
 );
 console.log(
-  'Created .env with unique local secrets. Register a server in the app, then set MEDIA_SERVER_ID.',
+  'Created .env with unique local secrets. Add a node in the app, then set MEDIA_SERVER_ID.',
 );

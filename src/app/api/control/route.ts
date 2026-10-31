@@ -24,7 +24,7 @@ function fail(error: unknown) {
     return NextResponse.json({ error: error.issues[0].message }, { status: 400 });
   console.error('Control operation failed:', error instanceof Error ? error.name : 'Unknown error');
   return NextResponse.json(
-    { error: 'Operation failed. Check the server configuration and try again.' },
+    { error: 'Operation failed. Check the application configuration and try again.' },
     { status: 500 },
   );
 }
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
       const server = await db.query.mediaServer.findFirst({
         where: and(eq(mediaServer.id, cmd.serverId), eq(mediaServer.workspaceId, ctx.workspace.id)),
       });
-      if (!server) throw new ApiError(404, 'Server not found.');
+      if (!server) throw new ApiError(404, 'Node not found.');
       await db.insert(channel).values({
         id: randomUUID(),
         workspaceId: ctx.workspace.id,
@@ -175,7 +175,7 @@ export async function POST(request: Request) {
           if (configured || teammates.length > 1)
             throw new ApiError(
               409,
-              'Your current workspace has servers or teammates. Use a separate account to join another workspace.',
+              'Your current workspace has nodes or teammates. Use a separate account to join another workspace.',
             );
         }
         if (current) await tx.delete(member).where(eq(member.id, current.id));
@@ -270,7 +270,10 @@ export async function POST(request: Request) {
           where: eq(mediaServer.id, c.serverId),
         });
         if (!server?.heartbeatAt || Date.now() - server.heartbeatAt.getTime() > 15000)
-          throw new ApiError(409, 'The media worker is offline. Start it before going live.');
+          throw new ApiError(
+            409,
+            'This node is offline. Start its media worker before going live.',
+          );
         const updated = await db
           .update(channel)
           .set({

@@ -18,9 +18,9 @@ npm run db:push
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000), create an account, and register a server with `localhost` as its hostname. Copy its server ID from the Servers screen and set `MEDIA_SERVER_ID` in `.env`. Keep the generated `.env` private.
+Open [localhost:3000](http://localhost:3000), create an account, and add a node with `localhost` as its hostname. Copy its node ID from the Nodes screen and set `MEDIA_SERVER_ID` in `.env`. Keep the generated `.env` private.
 
-Registering a server creates a configuration record; it does not provision a cloud VM. The commands below install the media services for the registered node.
+Adding a node creates a configuration record; it does not provision a cloud VM. The commands below install the media services for the registered node.
 
 ## Start local streaming services
 
@@ -30,7 +30,7 @@ With the host development server still running:
 docker compose -f compose.yml -f infra/dev.yml --profile streaming up -d --build --no-deps media worker srtla
 ```
 
-Wait for the server to show Online. Create a channel, copy its encoder connection details, and add your provider ingest URLs and stream keys. Enable every destination you want and press Go live. The worker starts a continuous fallback program and relays it to every enabled destination; incoming live media replaces fallback after five healthy seconds.
+Wait for the node to show Online. Create a channel, copy its encoder connection details, and add your provider ingest URLs and stream keys. Enable every destination you want and press Go live. The worker starts a continuous fallback program and relays it to every enabled destination; incoming live media replaces fallback after five healthy seconds.
 
 - RTMP ingest: TCP 1935.
 - SRT ingest: UDP 8890.
@@ -51,7 +51,7 @@ Twitch, Kick, and custom endpoints receive an output disconnect when the session
 
 ## Full Docker deployment
 
-Set `BETTER_AUTH_URL` to the website’s public HTTPS origin, configure a TLS reverse proxy, and use the registered server ID in `.env`. After initializing the database:
+Set `BETTER_AUTH_URL` to the website’s public HTTPS origin, configure a TLS reverse proxy, and use the registered node ID in `.env`. After initializing the database:
 
 ```sh
 docker compose --profile streaming up -d --build

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowDownToLine,
@@ -39,15 +39,15 @@ import { Preview } from './preview';
 import { authClient } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
 import type { DashboardData, Destination } from '@/lib/types';
-type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Servers' | 'Team';
+type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
-  'channel' | 'server' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
+  'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
 const nav: { name: View; icon: LucideIcon }[] = [
   { name: 'Overview', icon: LayoutDashboard },
   { name: 'Channels', icon: Radio },
   { name: 'Destinations', icon: Waypoints },
   { name: 'Scenes', icon: Video },
-  { name: 'Servers', icon: ServerIcon },
+  { name: 'Nodes', icon: ServerIcon },
   { name: 'Team', icon: Users },
 ];
 const titles: Record<Exclude<Modal, null>, [string, string]> = {
@@ -55,10 +55,7 @@ const titles: Record<Exclude<Modal, null>, [string, string]> = {
     'Create a channel',
     'Give your stream a home. Connect an encoder, then add destinations.',
   ],
-  server: [
-    'Register a server',
-    'Register a Linux media node, then configure its worker with the server ID.',
-  ],
+  node: ['Add a node', 'Add a Linux media node, then configure its worker with the node ID.'],
   destination: ['Add a destination', 'Relay your program to another provider at the same time.'],
   scene: ['Fallback scene', 'This scene stays live while your connection recovers.'],
   credentials: [
@@ -153,7 +150,11 @@ export function Dashboard() {
   const router = useRouter();
   const [now, setNow] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
-  const [view, setView] = useState<View>('Overview');
+  const searchParams = useSearchParams();
+  const view =
+    nav.find((item) => item.name.toLowerCase() === searchParams.get('view'))?.name ?? 'Overview';
+  const setView = (next: View) =>
+    router.push(next === 'Overview' ? '/' : `/?view=${next.toLowerCase()}`, { scroll: false });
   const [selected, setSelected] = useState('');
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState('');
@@ -238,7 +239,7 @@ export function Dashboard() {
     e.preventDefault();
     const values = Object.fromEntries(new FormData(e.currentTarget));
     let payload: Record<string, unknown> = {};
-    if (modal === 'server') payload = { action: 'createServer', ...values };
+    if (modal === 'node') payload = { action: 'createServer', ...values };
     if (modal === 'channel') payload = { action: 'createChannel', ...values };
     if (modal === 'destination')
       payload = {
@@ -398,9 +399,7 @@ export function Dashboard() {
               <item.icon size={17} />
               {item.name}
               {item.name === 'Channels' && (
-                <span className="ml-auto text-[10px] opacity-70">
-                  {data.channels.length.toString().padStart(2, '0')}
-                </span>
+                <span className="ml-auto text-[10px] opacity-70">{data.channels.length}</span>
               )}
             </button>
           ))}
@@ -465,8 +464,8 @@ export function Dashboard() {
               )}
             />
             {data.servers.some((s) => online(s.heartbeatAt))
-              ? 'Media worker connected'
-              : 'No workers connected'}
+              ? 'Node connected'
+              : 'No nodes connected'}
           </span>
           <Button
             variant="ghost"
@@ -491,7 +490,7 @@ export function Dashboard() {
                     ? 'One stream. Every audience.'
                     : view === 'Scenes'
                       ? 'Stay present. Even offline.'
-                      : view === 'Servers'
+                      : view === 'Nodes'
                         ? 'The engine behind your stream.'
                         : 'Better, together.'}
             </h1>
@@ -504,7 +503,7 @@ export function Dashboard() {
                     ? 'Send your program to multiple platforms simultaneously.'
                     : view === 'Scenes'
                       ? 'Custom scenes for the moments between connections.'
-                      : view === 'Servers'
+                      : view === 'Nodes'
                         ? 'Register media nodes and monitor worker availability.'
                         : 'Give your crew a seat in the control room.'}
             </p>
@@ -513,8 +512,8 @@ export function Dashboard() {
             <Button
               onClick={() =>
                 open(
-                  view === 'Servers'
-                    ? 'server'
+                  view === 'Nodes'
+                    ? 'node'
                     : view === 'Team'
                       ? 'member'
                       : view === 'Destinations'
@@ -524,11 +523,14 @@ export function Dashboard() {
                           : 'channel',
                 )
               }
-              disabled={(view === 'Destinations' || view === 'Scenes') && (!channel || active)}
+              disabled={
+                ((view === 'Destinations' || view === 'Scenes') && (!channel || active)) ||
+                ((view === 'Overview' || view === 'Channels') && !data.servers.length)
+              }
             >
               <Plus size={15} />
-              {view === 'Servers'
-                ? 'Register server'
+              {view === 'Nodes'
+                ? 'Add node'
                 : view === 'Team'
                   ? 'Add teammate'
                   : view === 'Destinations'
@@ -580,53 +582,70 @@ export function Dashboard() {
             </button>
           </div>
         )}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-8">
-          {[
-            {
-              label: 'ACTIVE CHANNELS',
-              value: data.channels
-                .filter((c) => c.desired === 'running')
-                .length.toString()
-                .padStart(2, '0'),
-              detail: `${data.channels.length} channels in your workspace`,
-              icon: Radio,
-            },
-            {
-              label: 'LIVE DESTINATIONS',
-              value: data.destinations
-                .filter((d) => d.status === 'connected')
-                .length.toString()
-                .padStart(2, '0'),
-              detail: `${data.destinations.filter((d) => d.enabled).length} destinations enabled`,
-              icon: Waypoints,
-            },
-            {
-              label: 'FALLBACK PROTECTION',
-              value: data.channels.filter((c) => c.state === 'fallback').length
-                ? 'Active'
-                : 'Ready',
-              detail: 'Automatic scene switching',
-              icon: ShieldCheck,
-            },
-            {
-              label: 'MEDIA SERVERS',
-              value: `${data.servers.filter((s) => online(s.heartbeatAt)).length} / ${data.servers.length}`,
-              detail: 'Workers currently connected',
-              icon: ServerIcon,
-            },
-          ].map((stat) => (
-            <div className="surface p-4 md:p-5" key={stat.label}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="label text-[9px]">{stat.label}</span>
-                <stat.icon size={15} className="text-muted-foreground" />
+        {view !== 'Nodes' && !data.servers.some((node) => online(node.heartbeatAt)) && (
+          <div
+            role="alert"
+            className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm"
+          >
+            <ServerIcon size={18} className="shrink-0 text-amber-300" />
+            <p className="flex-1 text-muted-foreground">
+              <span className="font-medium text-foreground">No nodes connected.</span>{' '}
+              {data.servers.length
+                ? 'Connect an existing node or add a new one to receive and relay streams.'
+                : 'Add a node to receive and relay streams.'}
+            </p>
+            <Link
+              href="/?view=nodes"
+              className="inline-flex items-center gap-1 text-primary underline underline-offset-4"
+            >
+              {admin ? 'Set up a node' : 'View nodes'}
+              <ArrowUpRight size={14} />
+            </Link>
+          </div>
+        )}
+        {view === 'Overview' && (
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-8">
+            {[
+              {
+                label: 'ACTIVE CHANNELS',
+                value: data.channels.filter((c) => c.desired === 'running').length,
+                detail: `${data.channels.length} channels in your workspace`,
+                icon: Radio,
+              },
+              {
+                label: 'LIVE DESTINATIONS',
+                value: data.destinations.filter((d) => d.status === 'connected').length,
+                detail: `${data.destinations.filter((d) => d.enabled).length} destinations enabled`,
+                icon: Waypoints,
+              },
+              {
+                label: 'FALLBACK PROTECTION',
+                value: data.channels.filter((c) => c.state === 'fallback').length
+                  ? 'Active'
+                  : 'Ready',
+                detail: 'Automatic scene switching',
+                icon: ShieldCheck,
+              },
+              {
+                label: 'MEDIA NODES',
+                value: `${data.servers.filter((s) => online(s.heartbeatAt)).length} / ${data.servers.length}`,
+                detail: 'Nodes currently connected',
+                icon: ServerIcon,
+              },
+            ].map((stat) => (
+              <div className="surface p-4 md:p-5" key={stat.label}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="label text-[9px]">{stat.label}</span>
+                  <stat.icon size={15} className="text-muted-foreground" />
+                </div>
+                <p className="mt-4 mb-2 text-[28px] leading-none font-medium tracking-tight">
+                  {stat.value}
+                </p>
+                <p className="text-[11px] text-muted-foreground">{stat.detail}</p>
               </div>
-              <p className="mt-4 mb-2 text-[28px] leading-none font-medium tracking-tight">
-                {stat.value}
-              </p>
-              <p className="text-[11px] text-muted-foreground">{stat.detail}</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         {(view === 'Overview' || view === 'Channels') && (
           <>
             {!channel ? (
@@ -636,20 +655,10 @@ export function Dashboard() {
                 </span>
                 <h2 className="text-xl">Your next adventure starts here.</h2>
                 <p className="max-w-md mx-auto text-muted-foreground leading-relaxed mt-3">
-                  Register a media server, create a channel, and connect your favorite streaming
-                  destinations. We’ll keep everything in view.
+                  {data.servers.length
+                    ? 'Create a channel and connect your favorite streaming destinations. We’ll keep everything in view.'
+                    : 'Connect a node to get started, then create a channel and choose where to broadcast.'}
                 </p>
-                <div className="flex justify-center gap-3 mt-7">
-                  <Button
-                    onClick={() => open(data.servers.length ? 'channel' : 'server')}
-                    disabled={!admin}
-                  >
-                    <Plus size={15} />
-                    {data.servers.length
-                      ? 'Create your first channel'
-                      : 'Register your first server'}
-                  </Button>
-                </div>
               </div>
             ) : (
               <>
@@ -992,13 +1001,13 @@ export function Dashboard() {
             )}
           </div>
         )}
-        {view === 'Servers' && (
+        {view === 'Nodes' && (
           <section className="surface overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
                   <tr>
-                    {['Server', 'Region', 'Worker', 'Server ID'].map((h) => (
+                    {['Node', 'Region', 'Status', 'Node ID'].map((h) => (
                       <th key={h} className="p-5 font-medium">
                         {h}
                       </th>
@@ -1037,16 +1046,16 @@ export function Dashboard() {
             {!data.servers.length && (
               <div className="text-center p-14">
                 <ServerIcon size={30} className="mx-auto text-muted-foreground mb-4" />
-                <p>No media servers yet.</p>
+                <p>No nodes yet.</p>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Register a server, copy its ID, and start the media worker.
+                  Add a node, copy its ID, and start its media worker.
                 </p>
               </div>
             )}
             <div className="p-5 bg-muted/20 text-xs text-muted-foreground flex items-start gap-2">
               <CircleHelp size={15} className="shrink-0" />
-              Registration creates a server record. Install the media stack on your Linux host using
-              the repository’s Docker Compose setup.
+              Adding a node creates a configuration record. Install the media stack on your Linux
+              host using the repository’s Docker Compose setup.
             </div>
           </section>
         )}
@@ -1122,7 +1131,7 @@ export function Dashboard() {
               {modal === 'credentials' && credentials ? (
                 <div className="space-y-4 mt-6">
                   <div className="rounded-lg border border-border p-3 font-mono text-[11px] break-all select-all space-y-3">
-                    <p className="text-muted-foreground">RTMP server</p>
+                    <p className="text-muted-foreground">RTMP endpoint</p>
                     <p>rtmp://{credentials.host}:1935</p>
                     <p className="text-muted-foreground">RTMP stream key</p>
                     <p>
@@ -1184,9 +1193,9 @@ export function Dashboard() {
                 </div>
               ) : (
                 <form onSubmit={submit} className="mt-6 space-y-4">
-                  {modal === 'server' && (
+                  {modal === 'node' && (
                     <>
-                      <Field title="Server name">
+                      <Field title="Node name">
                         <Input
                           name="name"
                           placeholder="US East · Primary"
@@ -1215,11 +1224,9 @@ export function Dashboard() {
                           maxLength={80}
                         />
                       </Field>
-                      <Field title="Media server">
+                      <Field title="Media node">
                         <select name="serverId" required defaultValue={data.servers[0]?.id}>
-                          {!data.servers.length && (
-                            <option value="">Register a server first</option>
-                          )}
+                          {!data.servers.length && <option value="">Add a node first</option>}
                           {data.servers.map((s) => (
                             <option value={s.id} key={s.id}>
                               {s.name}
@@ -1262,8 +1269,8 @@ export function Dashboard() {
                         </select>
                       </Field>
                       <Field
-                        title="Ingest server URL"
-                        hint="Use the server URL from your provider’s streaming dashboard."
+                        title="Ingest URL"
+                        hint="Use the ingest URL from your provider’s streaming dashboard."
                       >
                         <Input
                           key={provider}
@@ -1341,7 +1348,7 @@ export function Dashboard() {
                       <Field title="Role">
                         <select name="role" defaultValue="operator">
                           <option value="operator">Operator · Manage live sessions</option>
-                          <option value="admin">Admin · Manage channels and servers</option>
+                          <option value="admin">Admin · Manage channels and nodes</option>
                         </select>
                       </Field>
                     </>
@@ -1355,8 +1362,8 @@ export function Dashboard() {
                         ? 'Saving…'
                         : modal === 'channel'
                           ? 'Create channel'
-                          : modal === 'server'
-                            ? 'Register server'
+                          : modal === 'node'
+                            ? 'Add node'
                             : modal === 'destination'
                               ? 'Add destination'
                               : modal === 'member'

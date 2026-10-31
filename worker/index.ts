@@ -317,9 +317,9 @@ async function reconcile() {
 // A dedicated connection holds a server-scoped lock for the worker lifetime.
 const lock = await sql.reserve();
 const [held] = await lock`select pg_try_advisory_lock(hashtext(${serverId})) as locked`;
-if (!held.locked) throw new Error('Another worker already owns this media server.');
+if (!held.locked) throw new Error('Another worker already owns this media node.');
 if (!(await db.query.mediaServer.findFirst({ where: eq(mediaServer.id, serverId) })))
-  throw new Error('Register this media server in the dashboard first.');
+  throw new Error('Add this media node in the dashboard first.');
 console.log('Media worker connected. Reconciling desired session state.');
 async function shutdown() {
   if (exiting) return;
