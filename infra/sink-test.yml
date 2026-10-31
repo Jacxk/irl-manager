@@ -1,0 +1,20 @@
+logLevel: warn
+api: true
+apiAddress: :9997
+rtspTransports: [tcp]
+rtmp: true
+hls: false
+webrtc: false
+srt: false
+paths:
+  all_others:
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: api

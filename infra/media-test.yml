@@ -1,0 +1,12 @@
+services:
+  sink:
+    image: bluenviron/mediamtx:1.15.6
+    volumes: ['./infra/sink-test.yml:/mediamtx.yml:ro']
+    ports: ['127.0.0.1:9998:9997']
+  worker:
+    environment:
+      MEDIA_DEBUG: "1"
+    volumes:
+      - ./worker:/app/worker:ro
+      - ./src/lib:/app/src/lib:ro
+      - ./package.json:/app/package.json:ro

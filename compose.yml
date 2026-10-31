@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: irl
+      POSTGRES_USER: irl
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports: ['127.0.0.1:5432:5432']
+    volumes: ['postgres:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U irl']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://irl:${POSTGRES_PASSWORD}@db:5432/irl
+      MEDIA_HLS_URL: http://media:8888
+    ports: ['3000:3000']
+    depends_on:
+      db: { condition: service_healthy }
+  media:
+    image: bluenviron/mediamtx:1.15.6
+    environment:
+      MTX_AUTHHTTPADDRESS: http://web:3000/api/media/auth
+    volumes: ['./infra/mediamtx.yml:/mediamtx.yml:ro']
+    ports: ['1935:1935', '8890:8890/udp']
+    depends_on: [web]
+  srtla:
+    build:
+      context: .
+      dockerfile: infra/srtla.Dockerfile
+    profiles: [streaming]
+    ports: ['5000:5000/udp']
+    depends_on: [media]
+  worker:
+    build:
+      context: .
+      dockerfile: infra/worker.Dockerfile
+    profiles: [streaming]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://irl:${POSTGRES_PASSWORD}@db:5432/irl
+      MEDIA_INTERNAL_HOST: media
+    depends_on: [media]
+volumes:
+  postgres:
