@@ -771,13 +771,11 @@ export function Dashboard() {
                           </Button>
                         </div>
                       )}
-                      <div className="absolute top-4 left-4 rounded-md border border-white/10 bg-black/40 px-2 py-1 font-mono text-[9px] tracking-widest text-white/60">
-                        {preview
-                          ? active
-                            ? 'PROGRAM PREVIEW'
-                            : 'INPUT PREVIEW · NOT LIVE'
-                          : 'PREVIEW OFF'}
-                      </div>
+                      {!preview && (
+                        <div className="absolute top-4 left-4 rounded-md border border-white/10 bg-black/40 px-2 py-1 font-mono text-[9px] tracking-widest text-white/60">
+                          PREVIEW OFF
+                        </div>
+                      )}
                       {preview && (
                         <button
                           onClick={() => setPreview(false)}
@@ -799,9 +797,11 @@ export function Dashboard() {
                                 ? 'Input connected · Not live'
                                 : previewState === 'unsupported'
                                   ? 'Preview codec unsupported'
-                                  : previewState === 'connecting'
-                                    ? 'Checking incoming video…'
-                                    : 'Waiting for incoming video'
+                                  : previewState === 'paused'
+                                    ? 'Preview playback paused'
+                                    : previewState === 'connecting'
+                                      ? 'Checking incoming video…'
+                                      : 'Waiting for incoming video'
                             : channel.state === 'live'
                               ? 'Input healthy'
                               : channel.state === 'fallback'

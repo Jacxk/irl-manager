@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { sql } from '../src/lib/db';
 assert.ok(new URL(process.env.DATABASE_URL!).pathname.endsWith('_preview_admin_verify'));
 const nodeId = randomUUID(),
@@ -34,6 +37,31 @@ const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start',
 let userId = '',
   workspaceId = '';
 const browser = await chromium.launch();
+const mediaDir = mkdtempSync(join(tmpdir(), 'irl-player-'));
+execFileSync('ffmpeg', [
+  '-hide_banner',
+  '-loglevel',
+  'error',
+  '-f',
+  'lavfi',
+  '-i',
+  'testsrc=size=160x90:rate=24',
+  '-t',
+  '20',
+  '-c:v',
+  'libx264',
+  '-pix_fmt',
+  'yuv420p',
+  '-g',
+  '24',
+  '-f',
+  'hls',
+  '-hls_time',
+  '1',
+  '-hls_list_size',
+  '0',
+  join(mediaDir, 'index.m3u8'),
+]);
 try {
   for (let i = 0; i < 60; i++) {
     assert.equal(app.exitCode, null);
@@ -93,9 +121,45 @@ try {
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  await page.route('**/api/preview/**', (route) => {
+    const name = basename(new URL(route.request().url()).pathname);
+    return route.fulfill({
+      status: 200,
+      contentType: name.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+      body: readFileSync(join(mediaDir, name)),
+    });
+  });
   await page.goto(base);
   await page.getByRole('button', { name: 'Go live', exact: true }).waitFor();
   await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
+  const video = page.getByLabel('Incoming stream preview');
+  await page.getByText('Input connected · Not live', { exact: true }).waitFor();
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.controls), false);
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.muted), true);
+  await page.getByRole('button', { name: 'Pause preview playback', exact: true }).click();
+  await page.getByText('Preview playback paused', { exact: true }).waitFor();
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.paused), true);
+  await page.getByRole('button', { name: 'Play preview', exact: true }).click();
+  await page.getByText('Input connected · Not live', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Unmute preview', exact: true }).click();
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.muted), false);
+  const volume = page.getByRole('slider', { name: 'Preview volume', exact: true });
+  await expect(volume).toHaveAttribute('aria-valuenow', '1');
+  await volume.focus();
+  await page.keyboard.press('Home');
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.volume)).toBe(0);
+  await page.getByRole('button', { name: 'Unmute preview', exact: true }).click();
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.muted || v.volume === 0), false);
+  const player = page.getByRole('region', { name: 'Stream preview player' });
+  await player.focus();
+  await page.keyboard.press('m');
+  assert.equal(await video.evaluate((v: HTMLVideoElement) => v.muted), true);
+  await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
+  await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
+  await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Reconnect preview', exact: true }).click();
+  await page.getByText('Input connected · Not live', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Disable preview', exact: true }).click();
   await page.getByText('Input preview paused', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Enable preview', exact: true }).click();
@@ -108,7 +172,7 @@ try {
     'stopped',
   );
   console.log(
-    'Pre-live input routing, policy enforcement, program routing, default preview, pause/resume, mobile layout and session isolation passed.',
+    'Pre-live input routing, policy enforcement, program routing, default preview, pause/resume, custom playback/audio/fullscreen controls, mobile layout and session isolation passed.',
   );
 } finally {
   await browser.close();
@@ -118,4 +182,5 @@ try {
   if (workspaceId) await sql`delete from workspace where id=${workspaceId}`;
   if (userId) await sql`delete from "user" where id=${userId}`;
   await sql.end();
+  rmSync(mediaDir, { recursive: true, force: true });
 }
