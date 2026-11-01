@@ -6,7 +6,24 @@ A multi-user control room for IRL broadcasts, built with Next.js and shadcn/ui c
 
 Includes workspace permissions, team invitations, encrypted destination keys, opt-in program preview, custom text/color fallback scenes, recovery hysteresis, explicit end controls, and disconnect auto-end.
 
-## Start the website locally
+## Run the UI and installer in Docker
+
+With `.env` and the database schema initialized, run:
+
+```sh
+docker compose up -d --build db web installer
+```
+
+Open [localhost:3000](http://localhost:3000). The UI and background installer run in Docker; no `npm run dev` or `npm run installer` terminal needs to stay open. PostgreSQL keeps its existing volume, and these services restart with Docker unless explicitly stopped. The installer waits for the UI health check before starting.
+
+```sh
+docker compose logs -f web installer   # optional: follow logs
+docker compose stop web installer     # stop the app and installer
+```
+
+After code changes, rerun the first command to rebuild and restart the services. After editing `.env`, run `docker compose up -d web installer` to apply the new environment settings. Fresh setup still uses `npm run setup` to generate `.env` and `npm run db:push` to initialize the schema, as shown below.
+
+## Optional development outside Docker
 
 Requires Node.js 22+, npm, and Docker Compose.
 
