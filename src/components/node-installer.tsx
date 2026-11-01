@@ -53,6 +53,7 @@ type InstallData = {
   localInstalled: boolean;
   localNodeId: string | null;
   localEnabled: boolean;
+  sshEnabled: boolean;
   installerOnline: boolean;
   defaultControlUrl: string;
 };
@@ -62,6 +63,7 @@ export function useNodeInstallations(enabled: boolean) {
     localInstalled: false,
     localNodeId: null,
     localEnabled: false,
+    sshEnabled: false,
     installerOnline: false,
     defaultControlUrl: '',
   });
@@ -220,7 +222,7 @@ export function NodeInstaller({
           <InstallationSteps
             key={job.id}
             job={job}
-            canEdit={job.mode !== 'local' || data.localEnabled}
+            canEdit={job.mode === 'local' ? data.localEnabled : data.sshEnabled}
             refresh={data.refresh}
             saveRef={saveRef}
             onReady={() => {
@@ -273,7 +275,7 @@ export function NodeInstaller({
             )}
             <button
               className="w-full rounded-xl border border-border p-5 text-left hover:border-primary/50 disabled:opacity-40"
-              disabled={busy}
+              disabled={busy || !data.sshEnabled}
               onClick={() => void create('ssh')}
             >
               <span className="flex items-center gap-3 font-medium">

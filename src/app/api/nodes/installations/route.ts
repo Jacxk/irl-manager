@@ -1,14 +1,21 @@
+import { readSettings } from '@/lib/settings';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { mediaServer, nodeInstallation, serviceHeartbeat } from '@/lib/db/schema';
 import { encrypt } from '@/lib/crypto';
 import { ApiError } from '@/lib/access';
-import { installerAccess, apiFailure, tokenHash, localInstallAllowed } from '@/lib/nodes/security';
+import {
+  installerAccess,
+  apiFailure,
+  tokenHash,
+  localNodeInstallationAllowed,
+} from '@/lib/nodes/security';
 export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const ctx = await installerAccess();
+    const { values: settings } = await readSettings();
     const jobs = await db
       .select()
       .from(nodeInstallation)
@@ -31,9 +38,9 @@ export async function GET() {
         })),
         localInstalled: !!local,
         localNodeId: local?.workspaceId === ctx.workspace.id ? local.id : null,
-        defaultControlUrl:
-          process.env.NODE_CONTROL_URL ?? process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
-        localEnabled: localInstallAllowed(ctx.user.email),
+        defaultControlUrl: settings.nodeControlUrl || settings.publicUrl,
+        sshEnabled: settings.allowSshNodeInstallation,
+        localEnabled: await localNodeInstallationAllowed(ctx.user.email),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );
@@ -44,18 +51,30 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await installerAccess(request);
+    const { values: settings } = await readSettings();
     const { mode } = await request.json();
     if (!['local', 'ssh'].includes(mode))
       throw new ApiError(400, 'Choose local installation or SSH.');
-    if (mode === 'local' && !localInstallAllowed(ctx.user.email))
+    if (mode === 'local' && !(await localNodeInstallationAllowed(ctx.user.email)))
       throw new ApiError(
         409,
         'Local installation is disabled. Set ENABLE_LOCAL_INSTALL=1 and add your account email to LOCAL_INSTALL_ADMIN_EMAILS on the app server.',
       );
+    if (!settings.allowPersonalNodes && ctx.user.instanceRole !== 'admin')
+      throw new ApiError(403, 'Personal nodes are disabled.');
+    if (mode === 'ssh' && !settings.allowSshNodeInstallation)
+      throw new ApiError(403, 'SSH node installation is disabled by instance policy.');
     const id = randomUUID(),
       nodeId = randomUUID(),
       token = randomBytes(32).toString('hex');
     await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.workspace.id}))`);
+      const nodes = await tx
+        .select({ id: mediaServer.id })
+        .from(mediaServer)
+        .where(eq(mediaServer.workspaceId, ctx.workspace.id));
+      if (settings.maxNodesPerWorkspace && nodes.length >= settings.maxNodesPerWorkspace)
+        throw new ApiError(409, 'Workspace node limit reached.');
       if (
         mode === 'local' &&
         (await tx.query.mediaServer.findFirst({
@@ -101,8 +120,7 @@ export async function POST(request: Request) {
           name: mode === 'local' ? 'Local node' : 'Remote node',
           host: mode === 'local' ? 'localhost' : '',
           region: mode === 'local' ? 'Local' : 'Remote',
-          controlUrl:
-            process.env.NODE_CONTROL_URL ?? process.env.BETTER_AUTH_URL ?? 'http://localhost:3000',
+          controlUrl: settings.nodeControlUrl || settings.publicUrl,
           sshHost: '',
           sshPort: 22,
           sshUser: 'root',

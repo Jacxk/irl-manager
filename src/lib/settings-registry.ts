@@ -154,6 +154,47 @@ export const settingDefinitions = {
     default: 0,
     schema: z.number().int().min(0).max(10000),
   },
+  allowLocalNodeInstallation: {
+    section: 'Node operations',
+    label: 'Allow local node installation (also requires server enable flag and account allowlist)',
+    env: 'ALLOW_LOCAL_NODE_INSTALLATION',
+    default: true,
+    schema: z.boolean(),
+  },
+  allowSshNodeInstallation: {
+    section: 'Node operations',
+    label: 'Allow remote node installation over SSH',
+    env: 'ALLOW_SSH_NODE_INSTALLATION',
+    default: true,
+    schema: z.boolean(),
+  },
+  allowNodeRemoval: {
+    section: 'Node operations',
+    label: 'Allow permanent node removal',
+    env: 'ALLOW_NODE_REMOVAL',
+    default: true,
+    schema: z.boolean(),
+  },
+  nodeControlUrl: {
+    section: 'Node operations',
+    label: 'Default node control URL (blank uses public application URL; new setups only)',
+    env: 'NODE_CONTROL_URL',
+    default: '',
+    schema: z
+      .string()
+      .trim()
+      .refine((v) => {
+        if (!v) return true;
+        try {
+          const u = new URL(v);
+          return (
+            ['http:', 'https:'].includes(u.protocol) && u.origin === v && !u.username && !u.password
+          );
+        } catch {
+          return false;
+        }
+      }, 'Use an HTTP(S) origin without credentials, path, or trailing slash.'),
+  },
   language: {
     section: 'UI defaults',
     label: 'Language / locale',

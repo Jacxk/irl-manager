@@ -39,3 +39,34 @@ test('environment false and zero are supplied values and invalid settings fail c
     resolveSetting('publicUrl', undefined, { BETTER_AUTH_URL: 'javascript:alert(1)' }),
   );
 });
+
+test('node policies preserve defaults and respect saved values and deployment locks', () => {
+  for (const key of [
+    'allowLocalNodeInstallation',
+    'allowSshNodeInstallation',
+    'allowNodeRemoval',
+  ] as const) {
+    assert.equal(resolveSetting(key, undefined, {}).value, true);
+    assert.equal(resolveSetting(key, false, {}).value, false);
+  }
+  assert.equal(
+    resolveSetting('allowSshNodeInstallation', true, {
+      ALLOW_SSH_NODE_INSTALLATION: 'false',
+      LOCK_BY_ENVIRONMENT: 'true',
+    }).value,
+    false,
+  );
+  assert.equal(resolveSetting('nodeControlUrl', undefined, {}).value, '');
+  assert.equal(
+    resolveSetting('nodeControlUrl', 'https://nodes.example', {}).value,
+    'https://nodes.example',
+  );
+  for (const value of [
+    'https://user:secret@nodes.example',
+    'https://nodes.example/api',
+    'https://nodes.example?secret=1',
+    'file:///tmp/node',
+  ]) {
+    assert.throws(() => resolveSetting('nodeControlUrl', value, {}));
+  }
+});

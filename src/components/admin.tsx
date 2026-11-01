@@ -79,6 +79,12 @@ const sections: { name: string; icon: LucideIcon; description: string }[] = [
     icon: Globe,
     description: 'Default locale and time formatting for your instance.',
   },
+  {
+    name: 'Node operations',
+    icon: Server,
+    description:
+      'Control new local and SSH installations and permanent removal. Local operations also require ENABLE_LOCAL_INSTALL=1 and LOCAL_INSTALL_ADMIN_EMAILS on the server. Remote nodes require HTTPS unless the deployment explicitly permits insecure development control.',
+  },
   { name: 'Users', icon: Users, description: 'Manage accounts, access, and password recovery.' },
   {
     name: 'Shared nodes',
@@ -362,6 +368,8 @@ export function Admin({ children }: { children: React.ReactNode }) {
                 <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
                   Changes apply on the next page load or request. Session lifetime applies to new
                   sessions.
+                  {section === 'Node operations' &&
+                    ' Installation policies apply to new requests and setup edits; removal policy applies to new removal requests. Already queued operations continue. Existing node connections are unchanged.'}
                   {section === 'UI defaults' &&
                     ' Language controls locale formatting; interface text is currently English.'}
                 </p>
