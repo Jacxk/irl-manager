@@ -55,7 +55,10 @@ export function UserMenu({
       ref={root}
       className="relative mt-5 border-t border-border pt-4"
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+        // A label press can temporarily move focus to the document before its
+        // radio activates on release. Only dismiss for an actual outside target;
+        // outside pointer presses are handled separately above.
+        if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpen(false);
       }}
     >
       {open && (
