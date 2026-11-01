@@ -92,3 +92,19 @@ select:focus-visible {
   background: #394138;
   border-radius: 9px;
 }
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --background: #f5f6f1;
+  --foreground: #20271f;
+  --card: #ffffff;
+  --muted: #e9ece3;
+  --muted-foreground: #606b5d;
+  --border: #d4dacd;
+  --primary: #50691b;
+  --primary-foreground: #ffffff;
+  --destructive: #b73527;
+}

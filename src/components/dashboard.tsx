@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { UserMenu } from './user-menu';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,7 +13,6 @@ import {
   Eye,
   EyeOff,
   LayoutDashboard,
-  LogOut,
   Menu,
   Plus,
   Radio,
@@ -36,7 +36,6 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Preview } from './preview';
-import { authClient } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
 import type { DashboardData, Destination } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
@@ -354,7 +353,7 @@ export function Dashboard() {
       )}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-[#151815] transition-transform lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-card transition-transform lg:translate-x-0',
           mobile ? 'translate-x-0' : '-translate-x-full',
         )}
       >
@@ -405,7 +404,7 @@ export function Dashboard() {
           ))}
         </nav>
         <div className="mt-auto p-4">
-          <div className="rounded-xl border border-border bg-gradient-to-br from-[#252d20] to-card p-4">
+          <div className="rounded-xl border border-border bg-gradient-to-br from-primary/10 to-card p-4">
             <ShieldCheck size={19} className="text-primary mb-3" />
             <p className="text-xs font-medium">A little peace of mind.</p>
             <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -418,26 +417,7 @@ export function Dashboard() {
               Manage scenes <ArrowUpRight size={13} />
             </button>
           </div>
-          <div className="mt-5 flex items-center gap-2.5 border-t border-border pt-4">
-            <span className="grid size-8 place-items-center rounded-full bg-muted text-xs">
-              {data.user.name.slice(0, 2).toUpperCase()}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs">{data.user.name}</p>
-              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{data.user.email}</p>
-            </div>
-            <button
-              aria-label="Sign out"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={async () => {
-                await authClient.signOut();
-                router.push('/login');
-                router.refresh();
-              }}
-            >
-              <LogOut size={15} />
-            </button>
-          </div>
+          <UserMenu user={data.user} />
         </div>
       </aside>
       <header className="h-[70px] border-b border-border flex items-center justify-between px-5 md:px-9">
