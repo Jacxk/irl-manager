@@ -140,7 +140,7 @@ export function Login({
                 name="password"
                 type="password"
                 autoComplete={signup ? 'new-password' : 'current-password'}
-                minLength={minPasswordLength}
+                minLength={signup ? minPasswordLength : 1}
                 required
                 placeholder={signup ? 'Your new password' : 'Your password'}
               />
