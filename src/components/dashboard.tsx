@@ -177,6 +177,7 @@ export function Dashboard() {
   const [selected, setSelected] = useState('');
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState('');
+  const [refreshError, setRefreshError] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
@@ -198,6 +199,7 @@ export function Dashboard() {
     }
     const json = await res.json();
     if (!res.ok) throw new Error(json.error);
+    setRefreshError('');
     setData(json);
     setNow(Date.now());
   }, [router]);
@@ -205,7 +207,7 @@ export function Dashboard() {
     let active = true;
     const run = () =>
       reload().catch((e) => {
-        if (active) setError(e.message);
+        if (active) setRefreshError(e.message);
       });
     void run();
     const timer = setInterval(run, 4000);
@@ -243,6 +245,9 @@ export function Dashboard() {
       if (payload.action === 'toggleDestination')
         toast.success(payload.enabled ? 'Destination enabled.' : 'Destination disabled.');
       if (payload.action === 'deleteDestination') toast.success('Destination removed.');
+      if (payload.action === 'removeMember') toast.success('Teammate removed.');
+      if (payload.action === 'acceptInvitation') toast.success('Workspace joined.');
+      if (payload.action === 'declineInvitation') toast.info('Invitation declined.');
       return result;
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
@@ -318,9 +323,13 @@ export function Dashboard() {
       <main className="grid min-h-dvh place-items-center">
         <div className="text-center space-y-4">
           <Radio className="mx-auto text-primary" size={32} />
-          <p>{error || 'Opening your control room…'}</p>
-          {error && (
-            <Button onClick={() => void reload().catch((e) => setError(e.message))}>Retry</Button>
+          <p role={refreshError ? 'alert' : 'status'}>
+            {refreshError || 'Opening your control room…'}
+          </p>
+          {refreshError && (
+            <Button onClick={() => void reload().catch((e) => setRefreshError(e.message))}>
+              Retry
+            </Button>
           )}
         </div>
       </main>
@@ -621,13 +630,16 @@ export function Dashboard() {
             </div>
           </div>
         ))}
-        {error && !modal && (
+        {(error || refreshError) && !modal && (
           <div
             role="alert"
             className="mb-5 flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
           >
-            {error}
-            <button onClick={() => setError('')} aria-label="Dismiss error">
+            {error || refreshError}
+            <button
+              onClick={() => (error ? setError('') : setRefreshError(''))}
+              aria-label="Dismiss error"
+            >
               <X size={16} />
             </button>
           </div>
@@ -1183,6 +1195,7 @@ export function Dashboard() {
                       variant="ghost"
                       size="icon"
                       aria-label={`Remove ${m.name}`}
+                      disabled={busy}
                       onClick={() => void command({ action: 'removeMember', memberId: m.id })}
                     >
                       <Trash2 size={14} />

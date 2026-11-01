@@ -21,9 +21,11 @@ try {
     .update(channel)
     .set({ serverId: fixture.server.id })
     .where(eq(channel.id, fixture.channel.id));
-  const remote = await db.query.mediaServer.findFirst({
-    where: eq(mediaServer.id, fixture.remoteNodeId),
-  });
+  const remote = fixture.remoteNodeId
+    ? await db.query.mediaServer.findFirst({
+        where: eq(mediaServer.id, fixture.remoteNodeId),
+      })
+    : undefined;
   if (remote) await db.delete(mediaServer).where(eq(mediaServer.id, remote.id));
   if (fixture.duplicateId) {
     const duplicate = await db.query.nodeInstallation.findFirst({

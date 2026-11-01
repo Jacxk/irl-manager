@@ -1,3 +1,4 @@
+import { readCommandBody } from '@/lib/request-body';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
     const { values } = await readSettings();
     if (request.headers.get('origin') !== values.publicUrl)
       throw new ApiError(403, 'Invalid request origin.');
-    const cmd = command.parse(await request.json());
+    const cmd = command.parse(await readCommandBody(request));
     attempt = {
       actorId: actor.id,
       action: cmd.action,

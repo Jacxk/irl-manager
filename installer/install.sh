@@ -10,7 +10,13 @@ MODE=$4
 step() { printf 'IRL_STEP:%s\n' "$1"; }
 if [ "$(uname -s)" = Linux ] && command -v flock >/dev/null 2>&1; then
   exec 9>/tmp/irl-manager-node-install.lock
-  flock -w 1800 9 || { echo 'Another node installer is still running on this host.' >&2; exit 1; }
+  # BusyBox flock supports -n but not util-linux's -w timeout option.
+  attempts=0
+  until flock -n 9; do
+    [ "$attempts" -lt 1800 ] || { echo 'Another node installer is still running on this host.' >&2; exit 1; }
+    attempts=$((attempts + 1))
+    sleep 1
+  done
 fi
 step 'Checking host prerequisites'
 if ! command -v docker >/dev/null 2>&1; then

@@ -21,6 +21,7 @@ import { scanHost } from '../installer/transport';
 const exec = promisify(execFile);
 const fixture = JSON.parse(await readFile('/tmp/irl-manager-fixture.json', 'utf8'));
 const base = process.env.TEST_BASE_URL ?? 'http://localhost:3000';
+const nested = process.env.TEST_NESTED_DOCKER === '1';
 const suffix = randomUUID().slice(0, 8);
 const target = `irl-remove-ssh-${suffix}`,
   sentinel = `irl-remove-unrelated-${suffix}`,
@@ -116,7 +117,7 @@ try {
     '--network',
     'irl-manager_default',
     '-p',
-    '127.0.0.1::22',
+    nested ? '22222:22' : '127.0.0.1::22',
     '-v',
     '/var/run/docker.sock:/var/run/docker.sock',
     `irl-remove-ssh-image:${suffix}`,
@@ -155,8 +156,8 @@ try {
         ...managed!.config,
         name,
         host: 'localhost',
-        sshHost: target,
-        sshPort: 22,
+        sshHost: nested ? '127.0.0.1' : target,
+        sshPort: nested ? 22222 : 22,
         sshUser: 'root',
         sshAuth: 'key',
       } as typeof nodeInstallation.$inferInsert.config,
@@ -226,18 +227,19 @@ try {
     'echo preserve-me > /keep/data; exec sleep 3600',
   );
   await docker(
-    'run',
-    '-d',
+    'create',
     '--name',
     sink,
+    '--network',
+    'irl-manager_default',
     '-p',
-    '127.0.0.1::9997',
+    nested ? '9998:9997' : '127.0.0.1::9997',
     '-p',
     '127.0.0.1::1935',
-    '-v',
-    path.resolve('infra/sink-test.yml') + ':/mediamtx.yml:ro',
     'bluenviron/mediamtx:1.15.6',
   );
+  await docker('cp', 'infra/sink-test.yml', `${sink}:/mediamtx.yml`);
+  await docker('start', sink);
   const sinkApi =
     'http://127.0.0.1:' + Number((await docker('port', sink, '9997/tcp')).split(':').at(-1));
   const sinkPort = Number((await docker('port', sink, '1935/tcp')).split(':').at(-1));
@@ -254,7 +256,9 @@ try {
     .where(eq(channel.id, fixture.channel.id));
   await db
     .update(destination)
-    .set({ url: `rtmp://host.docker.internal:${sinkPort}/live` })
+    .set({
+      url: nested ? `rtmp://${sink}:1935/live` : `rtmp://host.docker.internal:${sinkPort}/live`,
+    })
     .where(eq(destination.channelId, fixture.channel.id));
   await db.insert(event).values({
     id: randomUUID(),
@@ -269,8 +273,7 @@ try {
     expiresAt: new Date(Date.now() + 300000),
   });
   await docker(
-    'run',
-    '-d',
+    'create',
     '--name',
     'irl-node-media-1',
     '--label',
@@ -279,10 +282,10 @@ try {
     'com.docker.compose.service=media',
     '--network',
     'irl-node_default',
-    '-v',
-    path.join(root, 'mediamtx.yml') + ':/mediamtx.yml:ro',
     'bluenviron/mediamtx:1.15.6',
   );
+  await docker('cp', path.join(root, 'mediamtx.yml'), 'irl-node-media-1:/mediamtx.yml');
+  await docker('start', 'irl-node-media-1');
   await docker(
     'run',
     '-d',
@@ -319,7 +322,7 @@ try {
     '-e',
     'MEDIA_WORKER_TOKEN=' + nodeToken,
     '-e',
-    'CONTROL_URL=http://host.docker.internal:3000',
+    'CONTROL_URL=' + base.replace('localhost', 'host.docker.internal'),
     '-e',
     'ALLOW_INSECURE_NODE_CONTROL=1',
     '-e',
@@ -328,6 +331,7 @@ try {
     nodeVolume + ':/node-data',
     'irl-manager-worker',
   );
+  if (nested) await docker('network', 'connect', 'irl-manager_default', 'irl-node-worker-1');
   const sinkPaths = async () => {
     try {
       return (await (await fetch(sinkApi + '/v3/paths/list')).json()).items.filter(

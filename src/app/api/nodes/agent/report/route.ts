@@ -1,3 +1,4 @@
+import { readCommandBody } from '@/lib/request-body';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -36,7 +37,9 @@ export async function POST(request: Request) {
     const node = await nodeAuth(request);
     if (node.agentInstance !== request.headers.get('x-node-instance'))
       throw new ApiError(409, 'Agent lease lost.');
-    const { changes } = z.object({ changes: z.array(change).max(250) }).parse(await request.json());
+    const { changes } = z
+      .object({ changes: z.array(change).max(250) })
+      .parse(await readCommandBody(request));
     await db.transaction(async (tx) => {
       const owned = await tx
         .select()

@@ -61,6 +61,8 @@ export async function GET(request: Request) {
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (e) {
+    if (e instanceof z.ZodError)
+      return Response.json({ error: 'Invalid agent instance.' }, { status: 400 });
     return apiFailure(e);
   }
 }

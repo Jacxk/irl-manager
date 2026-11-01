@@ -1,3 +1,5 @@
+import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
+import { readCommandBody } from '@/lib/request-body';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
@@ -113,232 +115,277 @@ export async function POST(request: Request) {
     const { values: settings } = await readSettings();
     if (request.headers.get('origin') !== settings.publicUrl)
       throw new ApiError(403, 'Invalid request origin.');
-    const cmd = commandSchema.parse(await request.json());
-    const channelContext = 'channelId' in cmd ? await requireChannel(cmd.channelId) : null;
+    const cmd = commandSchema.parse(await readCommandBody(request));
+    let channelContext = 'channelId' in cmd ? await requireChannel(cmd.channelId) : null;
     const ctx = channelContext ?? (await access());
-    const admin = ['owner', 'admin'].includes(ctx.membership.role);
-    if (
-      [
-        'createServer',
-        'createChannel',
-        'addDestination',
-        'deleteDestination',
-        'rotateKey',
-        'addMember',
-        'removeMember',
-      ].includes(cmd.action) &&
-      !admin
-    )
-      throw new ApiError(403, 'Administrator access required.');
-    if (cmd.action === 'createServer') {
-      if (!settings.allowPersonalNodes && ctx.user.instanceRole !== 'admin')
-        throw new ApiError(403, 'Personal nodes are disabled.');
-      await db.transaction(async (tx) => {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.workspace.id}))`);
-        const nodes = await tx
-          .select({ id: mediaServer.id })
-          .from(mediaServer)
-          .where(eq(mediaServer.workspaceId, ctx.workspace.id));
-        if (settings.maxNodesPerWorkspace && nodes.length >= settings.maxNodesPerWorkspace)
-          throw new ApiError(409, 'Workspace node limit reached.');
-        await tx.insert(mediaServer).values({
-          id: randomUUID(),
-          workspaceId: ctx.workspace.id,
-          name: cmd.name,
-          host: cmd.host,
-          region: cmd.region,
+    return await db.transaction(async (tx) => {
+      await lockWorkspaceAccess(tx, ctx);
+      if (channelContext) {
+        const [current] = await tx
+          .select()
+          .from(channel)
+          .where(
+            and(
+              eq(channel.id, channelContext.channel.id),
+              eq(channel.workspaceId, ctx.workspace.id),
+            ),
+          )
+          .for('update');
+        if (!current) throw new ApiError(404, 'Channel not found.');
+        const node = await tx.query.mediaServer.findFirst({
+          where: eq(mediaServer.id, current.serverId),
         });
-      });
-    } else if (cmd.action === 'createChannel') {
-      const server = await db.query.mediaServer.findFirst({
-        where: and(
-          eq(mediaServer.id, cmd.serverId),
-          or(
-            eq(mediaServer.workspaceId, ctx.workspace.id),
-            and(eq(mediaServer.shared, true), eq(mediaServer.available, true)),
-          ),
-        ),
-      });
-      if (!server) throw new ApiError(404, 'Node not found.');
-      if (server.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
-      await db.insert(channel).values({
-        id: randomUUID(),
-        workspaceId: ctx.workspace.id,
-        serverId: server.id,
-        name: cmd.name,
-        protocol: cmd.protocol,
-        ingestKey: randomBytes(24).toString('hex'),
-      });
-    } else if (cmd.action === 'addMember') {
-      if (ctx.membership.role !== 'owner')
-        throw new ApiError(403, 'Only owners can manage members.');
-      const person = await db.query.user.findFirst({
-        where: eq(user.email, cmd.email.toLowerCase()),
-      });
-      if (!person) throw new ApiError(400, 'Ask this person to create an account first.');
-      const existing = await db.query.member.findFirst({ where: eq(member.userId, person.id) });
-      if (existing?.workspaceId === ctx.workspace.id)
-        throw new ApiError(400, 'This person is already in your workspace.');
-      await db
-        .insert(invitation)
-        .values({
-          id: randomUUID(),
-          workspaceId: ctx.workspace.id,
-          userId: person.id,
-          role: cmd.role,
-        })
-        .onConflictDoNothing();
-    } else if (cmd.action === 'acceptInvitation') {
-      await db.transaction(async (tx) => {
-        const { sql } = await import('drizzle-orm');
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.user.id}))`);
-        const invite = await tx.query.invitation.findFirst({
-          where: and(eq(invitation.id, cmd.invitationId), eq(invitation.userId, ctx.user.id)),
-        });
-        if (!invite) throw new ApiError(404, 'Invitation not found.');
-        const current = await tx.query.member.findFirst({ where: eq(member.userId, ctx.user.id) });
-        if (current?.role === 'owner') {
-          const configured = await tx.query.mediaServer.findFirst({
-            where: eq(mediaServer.workspaceId, current.workspaceId),
+        if (node?.removalRequestedAt)
+          throw new ApiError(409, 'This node is being permanently removed.');
+        channelContext = { ...ctx, channel: current };
+      }
+      const admin = ['owner', 'admin'].includes(ctx.membership.role);
+      if (
+        [
+          'createServer',
+          'createChannel',
+          'addDestination',
+          'deleteDestination',
+          'rotateKey',
+          'addMember',
+          'removeMember',
+        ].includes(cmd.action) &&
+        !admin
+      )
+        throw new ApiError(403, 'Administrator access required.');
+      if (cmd.action === 'createServer') {
+        if (!settings.allowPersonalNodes && ctx.user.instanceRole !== 'admin')
+          throw new ApiError(403, 'Personal nodes are disabled.');
+        await tx.transaction(async (tx) => {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.workspace.id}))`);
+          const nodes = await tx
+            .select({ id: mediaServer.id })
+            .from(mediaServer)
+            .where(eq(mediaServer.workspaceId, ctx.workspace.id));
+          if (settings.maxNodesPerWorkspace && nodes.length >= settings.maxNodesPerWorkspace)
+            throw new ApiError(409, 'Workspace node limit reached.');
+          await tx.insert(mediaServer).values({
+            id: randomUUID(),
+            workspaceId: ctx.workspace.id,
+            name: cmd.name,
+            host: cmd.host,
+            region: cmd.region,
           });
-          const teammates = await tx
-            .select()
-            .from(member)
-            .where(eq(member.workspaceId, current.workspaceId));
-          if (configured || teammates.length > 1)
-            throw new ApiError(
-              409,
-              'Your current workspace has nodes or teammates. Use a separate account to join another workspace.',
-            );
-        }
-        if (current) await tx.delete(member).where(eq(member.id, current.id));
-        await tx.insert(member).values({
-          id: randomUUID(),
-          workspaceId: invite.workspaceId,
-          userId: ctx.user.id,
-          role: invite.role,
         });
-        await tx.delete(invitation).where(eq(invitation.id, invite.id));
-      });
-    } else if (cmd.action === 'declineInvitation') {
-      await db
-        .delete(invitation)
-        .where(and(eq(invitation.id, cmd.invitationId), eq(invitation.userId, ctx.user.id)));
-    } else if (cmd.action === 'removeMember') {
-      if (ctx.membership.role !== 'owner')
-        throw new ApiError(403, 'Only owners can manage members.');
-      await db
-        .delete(member)
-        .where(
-          and(
-            eq(member.id, cmd.memberId),
-            eq(member.workspaceId, ctx.workspace.id),
-            inArray(member.role, ['admin', 'operator']),
+      } else if (cmd.action === 'createChannel') {
+        const server = await tx.query.mediaServer.findFirst({
+          where: and(
+            eq(mediaServer.id, cmd.serverId),
+            or(
+              eq(mediaServer.workspaceId, ctx.workspace.id),
+              and(eq(mediaServer.shared, true), eq(mediaServer.available, true)),
+            ),
           ),
-        );
-    } else if (channelContext) {
-      const c = channelContext.channel;
-      if (cmd.action === 'credentials') {
-        const server = await db.query.mediaServer.findFirst({
-          where: eq(mediaServer.id, c.serverId),
         });
-        return NextResponse.json(
-          { host: server!.host, path: `input_${c.id}`, username: c.id, key: c.ingestKey },
-          { headers: { 'Cache-Control': 'no-store' } },
-        );
-      }
-      if (cmd.action === 'rotateKey') {
-        if (c.desired === 'running')
-          throw new ApiError(409, 'End this session before rotating its ingest key.');
-        await db
-          .update(channel)
-          .set({ ingestKey: randomBytes(24).toString('hex') })
-          .where(eq(channel.id, c.id));
-      }
-      if (cmd.action === 'addDestination') {
-        if (c.desired === 'running')
-          throw new ApiError(409, 'End this session before adding destinations.');
-        await db.insert(destination).values({
+        if (!server) throw new ApiError(404, 'Node not found.');
+        if (server.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
+        await tx.insert(channel).values({
           id: randomUUID(),
-          channelId: c.id,
+          workspaceId: ctx.workspace.id,
+          serverId: server.id,
           name: cmd.name,
-          provider: cmd.provider,
-          url: cmd.url.replace(/\/$/, ''),
-          encryptedKey: encrypt(cmd.key),
+          protocol: cmd.protocol,
+          ingestKey: randomBytes(24).toString('hex'),
         });
-      }
-      if (cmd.action === 'toggleDestination')
-        await db
-          .update(destination)
-          .set({ enabled: cmd.enabled })
-          .where(and(eq(destination.id, cmd.destinationId), eq(destination.channelId, c.id)));
-      if (cmd.action === 'deleteDestination') {
-        if (c.desired === 'running')
-          throw new ApiError(409, 'End this session before removing destinations.');
-        await db
-          .delete(destination)
-          .where(and(eq(destination.id, cmd.destinationId), eq(destination.channelId, c.id)));
-      }
-      if (cmd.action === 'scene') {
-        if (c.desired === 'running')
-          throw new ApiError(409, 'End this session before editing its scene.');
-        await db
-          .update(channel)
-          .set({
-            sceneTitle: cmd.title,
-            sceneSubtitle: cmd.subtitle,
-            sceneColor: cmd.color,
-            graceSeconds: cmd.graceSeconds,
+      } else if (cmd.action === 'addMember') {
+        if (ctx.membership.role !== 'owner')
+          throw new ApiError(403, 'Only owners can manage members.');
+        const person = await tx.query.user.findFirst({
+          where: eq(user.email, cmd.email.toLowerCase()),
+        });
+        if (!person) throw new ApiError(400, 'Ask this person to create an account first.');
+        const existing = await tx.query.member.findFirst({ where: eq(member.userId, person.id) });
+        if (existing?.workspaceId === ctx.workspace.id)
+          throw new ApiError(400, 'This person is already in your workspace.');
+        await tx
+          .insert(invitation)
+          .values({
+            id: randomUUID(),
+            workspaceId: ctx.workspace.id,
+            userId: person.id,
+            role: cmd.role,
           })
-          .where(eq(channel.id, c.id));
-      }
-      if (cmd.action === 'fallback')
-        await db.update(channel).set({ manualFallback: cmd.enabled }).where(eq(channel.id, c.id));
-      if (cmd.action === 'start') {
-        const enabled = await db.query.destination.findFirst({
-          where: and(eq(destination.channelId, c.id), eq(destination.enabled, true)),
+          .onConflictDoNothing();
+      } else if (cmd.action === 'acceptInvitation') {
+        await tx.transaction(async (tx) => {
+          const { sql } = await import('drizzle-orm');
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.user.id}))`);
+          let invite = await tx.query.invitation.findFirst({
+            where: and(eq(invitation.id, cmd.invitationId), eq(invitation.userId, ctx.user.id)),
+          });
+          if (!invite) throw new ApiError(404, 'Invitation not found.');
+          // Serialize departures and arrivals across both workspaces in a stable order.
+          await tx
+            .select({ id: workspace.id })
+            .from(workspace)
+            .where(inArray(workspace.id, [ctx.workspace.id, invite.workspaceId]))
+            .orderBy(workspace.id)
+            .for('update');
+          invite = await tx.query.invitation.findFirst({
+            where: and(eq(invitation.id, cmd.invitationId), eq(invitation.userId, ctx.user.id)),
+          });
+          if (!invite) throw new ApiError(404, 'Invitation not found.');
+          const owner = await tx.query.member.findFirst({
+            where: and(eq(member.workspaceId, invite.workspaceId), eq(member.role, 'owner')),
+          });
+          if (!owner) throw new ApiError(409, 'This invitation no longer has a workspace owner.');
+
+          const current = await tx.query.member.findFirst({
+            where: eq(member.userId, ctx.user.id),
+          });
+          if (current?.role === 'owner') {
+            const configured = await tx.query.mediaServer.findFirst({
+              where: eq(mediaServer.workspaceId, current.workspaceId),
+            });
+            const configuredChannel = await tx.query.channel.findFirst({
+              where: eq(channel.workspaceId, current.workspaceId),
+            });
+            const teammates = await tx
+              .select()
+              .from(member)
+              .where(eq(member.workspaceId, current.workspaceId));
+            if (configured || configuredChannel || teammates.length > 1)
+              throw new ApiError(
+                409,
+                'Your current workspace has nodes, channels, or teammates. Use a separate account to join another workspace.',
+              );
+          }
+          if (current?.role === 'owner')
+            await tx.delete(invitation).where(eq(invitation.workspaceId, current.workspaceId));
+          if (current) await tx.delete(member).where(eq(member.id, current.id));
+          await tx.insert(member).values({
+            id: randomUUID(),
+            workspaceId: invite.workspaceId,
+            userId: ctx.user.id,
+            role: invite.role,
+          });
+          await tx.delete(invitation).where(eq(invitation.id, invite.id));
         });
-        if (!enabled) throw new ApiError(400, 'Add and enable at least one destination.');
-        const server = await db.query.mediaServer.findFirst({
-          where: eq(mediaServer.id, c.serverId),
-        });
-        if (server?.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
-        if (!server?.heartbeatAt || Date.now() - server.heartbeatAt.getTime() > 15000)
-          throw new ApiError(
-            409,
-            'This node is offline. Start its media worker before going live.',
+      } else if (cmd.action === 'declineInvitation') {
+        await tx
+          .delete(invitation)
+          .where(and(eq(invitation.id, cmd.invitationId), eq(invitation.userId, ctx.user.id)));
+      } else if (cmd.action === 'removeMember') {
+        if (ctx.membership.role !== 'owner')
+          throw new ApiError(403, 'Only owners can manage members.');
+        await tx
+          .delete(member)
+          .where(
+            and(
+              eq(member.id, cmd.memberId),
+              eq(member.workspaceId, ctx.workspace.id),
+              inArray(member.role, ['admin', 'operator']),
+            ),
           );
-        const updated = await db
-          .update(channel)
-          .set({
-            desired: 'running',
-            state: 'starting',
-            sessionId: randomUUID(),
-            startedAt: new Date(),
-            endedAt: null,
-            endReason: null,
-            manualFallback: false,
-            lastFrameAt: null,
-          })
-          .where(and(eq(channel.id, c.id), eq(channel.desired, 'stopped')))
-          .returning();
-        if (updated.length)
-          await db.insert(event).values({
+      } else if (channelContext) {
+        const c = channelContext.channel;
+        if (cmd.action === 'credentials') {
+          const server = await tx.query.mediaServer.findFirst({
+            where: eq(mediaServer.id, c.serverId),
+          });
+          return NextResponse.json(
+            { host: server!.host, path: `input_${c.id}`, username: c.id, key: c.ingestKey },
+            { headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        if (cmd.action === 'rotateKey') {
+          if (c.desired === 'running')
+            throw new ApiError(409, 'End this session before rotating its ingest key.');
+          await tx
+            .update(channel)
+            .set({ ingestKey: randomBytes(24).toString('hex') })
+            .where(eq(channel.id, c.id));
+        }
+        if (cmd.action === 'addDestination') {
+          if (c.desired === 'running')
+            throw new ApiError(409, 'End this session before adding destinations.');
+          await tx.insert(destination).values({
             id: randomUUID(),
             channelId: c.id,
-            sessionId: updated[0].sessionId,
-            kind: 'session',
-            message: 'Session requested. Starting all enabled destinations.',
+            name: cmd.name,
+            provider: cmd.provider,
+            url: cmd.url.replace(/\/$/, ''),
+            encryptedKey: encrypt(cmd.key),
           });
+        }
+        if (cmd.action === 'toggleDestination')
+          await tx
+            .update(destination)
+            .set({ enabled: cmd.enabled })
+            .where(and(eq(destination.id, cmd.destinationId), eq(destination.channelId, c.id)));
+        if (cmd.action === 'deleteDestination') {
+          if (c.desired === 'running')
+            throw new ApiError(409, 'End this session before removing destinations.');
+          await tx
+            .delete(destination)
+            .where(and(eq(destination.id, cmd.destinationId), eq(destination.channelId, c.id)));
+        }
+        if (cmd.action === 'scene') {
+          if (c.desired === 'running')
+            throw new ApiError(409, 'End this session before editing its scene.');
+          await tx
+            .update(channel)
+            .set({
+              sceneTitle: cmd.title,
+              sceneSubtitle: cmd.subtitle,
+              sceneColor: cmd.color,
+              graceSeconds: cmd.graceSeconds,
+            })
+            .where(eq(channel.id, c.id));
+        }
+        if (cmd.action === 'fallback')
+          await tx.update(channel).set({ manualFallback: cmd.enabled }).where(eq(channel.id, c.id));
+        if (cmd.action === 'start') {
+          const enabled = await tx.query.destination.findFirst({
+            where: and(eq(destination.channelId, c.id), eq(destination.enabled, true)),
+          });
+          if (!enabled) throw new ApiError(400, 'Add and enable at least one destination.');
+          const server = await tx.query.mediaServer.findFirst({
+            where: eq(mediaServer.id, c.serverId),
+          });
+          if (server?.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
+          if (!server?.heartbeatAt || Date.now() - server.heartbeatAt.getTime() > 15000)
+            throw new ApiError(
+              409,
+              'This node is offline. Start its media worker before going live.',
+            );
+          const updated = await tx
+            .update(channel)
+            .set({
+              desired: 'running',
+              state: 'starting',
+              sessionId: randomUUID(),
+              startedAt: new Date(),
+              endedAt: null,
+              endReason: null,
+              manualFallback: false,
+              lastFrameAt: null,
+            })
+            .where(and(eq(channel.id, c.id), eq(channel.desired, 'stopped')))
+            .returning();
+          if (updated.length)
+            await tx.insert(event).values({
+              id: randomUUID(),
+              channelId: c.id,
+              sessionId: updated[0].sessionId,
+              kind: 'session',
+              message: 'Session requested. Starting all enabled destinations.',
+            });
+        }
+        if (cmd.action === 'stop') {
+          await tx
+            .update(channel)
+            .set({ desired: 'stopped', state: 'ending', endReason: 'intentional' })
+            .where(and(eq(channel.id, c.id), eq(channel.desired, 'running')));
+        }
       }
-      if (cmd.action === 'stop') {
-        await db
-          .update(channel)
-          .set({ desired: 'stopped', state: 'ending', endReason: 'intentional' })
-          .where(and(eq(channel.id, c.id), eq(channel.desired, 'running')));
-      }
-    }
-    return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true });
+    });
   } catch (error) {
     return fail(error);
   }

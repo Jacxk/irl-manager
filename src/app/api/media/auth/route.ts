@@ -1,3 +1,5 @@
+import { readCommandBody } from '@/lib/request-body';
+import { ApiError } from '@/lib/access';
 import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
@@ -9,7 +11,7 @@ function equal(a: string, b: string) {
 }
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await readCommandBody(request);
     if (
       body.user === 'worker' &&
       process.env.MEDIA_WORKER_TOKEN &&
@@ -26,7 +28,9 @@ export async function POST(request: Request) {
     if (!found || body.user !== found.id || !equal(String(body.password ?? ''), found.ingestKey))
       return new Response(null, { status: 401 });
     return new Response(null, { status: 200 });
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 413)
+      return new Response(null, { status: 413 });
     return new Response(null, { status: 401 });
   }
 }
