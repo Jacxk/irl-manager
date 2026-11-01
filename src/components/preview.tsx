@@ -5,7 +5,8 @@ import { Maximize, Minimize, Pause, Play, Radio, RefreshCw, Volume2, VolumeX } f
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Slider } from './ui/slider';
-export type PreviewState = 'connecting' | 'playing' | 'waiting' | 'unsupported' | 'paused';
+export type PreviewState =
+  'connecting' | 'playing' | 'waiting' | 'unsupported' | 'paused' | 'offline';
 export function Preview({
   channelId,
   source,
@@ -35,6 +36,10 @@ export function Preview({
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let hls: Hls | undefined;
+    let hadVideo = false;
+    let offline = false;
+    let lastProgress = Date.now();
+    let lastTime = 0;
     const update = (next: PreviewState) => {
       if (!disposed) {
         setState(next);
@@ -43,6 +48,10 @@ export function Preview({
     };
     const src = `/api/preview/${channelId}/index.m3u8`;
     const retry = () => {
+      if (hadVideo) {
+        stopPreview();
+        return;
+      }
       update(userPaused.current ? 'paused' : 'waiting');
       if (!timer)
         timer = setTimeout(() => {
@@ -50,14 +59,42 @@ export function Preview({
           start();
         }, 5000);
     };
+    function stopPreview() {
+      if (disposed) return;
+      offline = true;
+      const current = hls;
+      hls = undefined;
+      current?.destroy();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      setPlaybackError('');
+      update('offline');
+      if (!timer)
+        timer = setTimeout(() => {
+          timer = undefined;
+          start();
+        }, 5000);
+    }
+    const progress = () => {
+      if (video.currentTime !== lastTime) {
+        lastTime = video.currentTime;
+        lastProgress = Date.now();
+      }
+    };
     const playing = () => {
+      hadVideo = true;
+      offline = false;
+      lastProgress = Date.now();
       setPlaybackError('');
       update('playing');
     };
-    const waiting = () => update(userPaused.current ? 'paused' : 'waiting');
+    const waiting = () => {
+      if (!offline) update(userPaused.current ? 'paused' : 'waiting');
+    };
     const pause = () => {
       setPaused(true);
-      if (userPaused.current) update('paused');
+      if (userPaused.current && !offline) update('paused');
     };
     const play = () => setPaused(false);
     const audio = () => {
@@ -65,12 +102,17 @@ export function Preview({
       setVolume(video.volume);
     };
     function start() {
-      hls?.destroy();
+      const current = hls;
+      hls = undefined;
+      current?.destroy();
       video.autoplay = !userPaused.current;
-      update(userPaused.current ? 'paused' : 'connecting');
+      lastProgress = Date.now();
+      update(offline ? 'offline' : userPaused.current ? 'paused' : 'connecting');
       if (Hls.isSupported()) {
-        hls = new Hls({ lowLatencyMode: true });
-        hls.on(Hls.Events.ERROR, (_, data) => {
+        const player = new Hls({ lowLatencyMode: true });
+        hls = player;
+        player.on(Hls.Events.ERROR, (_, data) => {
+          if (disposed || hls !== player) return;
           if (data.fatal) {
             if (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR)
               update('unsupported');
@@ -88,6 +130,12 @@ export function Preview({
           });
       } else update('unsupported');
     }
+    video.addEventListener('ended', stopPreview);
+    video.addEventListener('timeupdate', progress);
+    const watchdog = setInterval(() => {
+      if (hadVideo && !offline && !userPaused.current && Date.now() - lastProgress > 10000)
+        stopPreview();
+    }, 1000);
     video.addEventListener('playing', playing);
     video.addEventListener('waiting', waiting);
     video.addEventListener('pause', pause);
@@ -98,6 +146,9 @@ export function Preview({
     return () => {
       disposed = true;
       clearTimeout(timer);
+      clearInterval(watchdog);
+      video.removeEventListener('ended', stopPreview);
+      video.removeEventListener('timeupdate', progress);
       video.removeEventListener('playing', playing);
       video.removeEventListener('waiting', waiting);
       video.removeEventListener('pause', pause);
@@ -110,6 +161,11 @@ export function Preview({
     };
   }, [channelId, source, onState, revision]);
   async function togglePlayback() {
+    if (state === 'offline') {
+      userPaused.current = false;
+      setRevision((r) => r + 1);
+      return;
+    }
     const video = ref.current!;
     if (!video.paused) {
       userPaused.current = true;
@@ -171,7 +227,7 @@ export function Preview({
     >
       <video
         ref={ref}
-        className="absolute inset-0 size-full object-contain"
+        className={`absolute inset-0 size-full object-contain ${state === 'offline' ? 'invisible' : ''}`}
         autoPlay
         muted
         playsInline
@@ -191,13 +247,15 @@ export function Preview({
           {playbackError ||
             (state === 'unsupported'
               ? 'This browser cannot play this stream codec. Try H.264 on your encoder.'
-              : state === 'paused'
-                ? 'Preview paused. Your stream continues.'
-                : state === 'connecting'
-                  ? 'Connecting to preview…'
-                  : source === 'input'
-                    ? 'Waiting for incoming video. Retrying automatically…'
-                    : 'Waiting for program output. Retrying automatically…')}
+              : state === 'offline'
+                ? 'Stream ended. Waiting for a new stream.'
+                : state === 'paused'
+                  ? 'Preview paused. Your stream continues.'
+                  : state === 'connecting'
+                    ? 'Connecting to preview…'
+                    : source === 'input'
+                      ? 'Waiting for incoming video. Retrying automatically…'
+                      : 'Waiting for program output. Retrying automatically…')}
         </div>
       )}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent px-3 pb-3 pt-8">

@@ -179,6 +179,9 @@ export function Dashboard() {
   const [refreshError, setRefreshError] = useState('');
   const [busy, setBusy] = useState(false);
   const [previewOverride, setPreview] = useState<boolean | null>(null);
+  const [inputStatus, setInputStatus] = useState<{ channelId: string; connected: boolean } | null>(
+    null,
+  );
   const [previewState, setPreviewState] = useState<PreviewState>('connecting');
   const [mobile, setMobile] = useState(false);
   const [installationId, setInstallationId] = useState<string | null>(null);
@@ -220,9 +223,40 @@ export function Dashboard() {
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
-  const preview =
+  const previewWanted =
     (previewOverride ?? data?.previewOnByDefault ?? true) &&
     (active || data?.allowPreLivePreview !== false);
+  const previewChannelId = channel?.id;
+  const previewAllowed = active || data?.allowPreLivePreview !== false;
+  const inputConnected =
+    inputStatus?.channelId === previewChannelId && inputStatus?.connected === true;
+  const preview = previewWanted && inputConnected;
+  useEffect(() => {
+    if (!previewChannelId || !previewAllowed) return;
+    const controller = new AbortController();
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function check() {
+      let connected = false;
+      try {
+        const response = await fetch(`/api/preview/${previewChannelId}/status.json`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (response.ok) connected = (await response.json()).connected === true;
+      } catch {}
+      if (!disposed) {
+        setInputStatus({ channelId: previewChannelId!, connected });
+        timer = setTimeout(check, 3000);
+      }
+    }
+    void check();
+    return () => {
+      disposed = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [previewChannelId, previewAllowed]);
   const admin = data?.role !== 'operator';
   const installations = useNodeInstallations(!!data && admin);
   const nodeJobs = new Map(installations.jobs.map((job) => [job.nodeId, job]));
@@ -237,6 +271,7 @@ export function Dashboard() {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
+      if (payload.action === 'start') setPreview(null);
       await reload();
       if (payload.action === 'start')
         toast.success('Session requested. Connecting enabled destinations.');
@@ -752,23 +787,31 @@ export function Dashboard() {
                             <span className="absolute -inset-4 rounded-full border border-primary/5" />
                           </div>
                           <h3 className="text-2xl font-medium tracking-tight">
-                            Preview is paused.
+                            {!previewAllowed
+                              ? 'Preview unavailable'
+                              : inputConnected
+                                ? 'Preview is paused.'
+                                : 'No incoming stream'}
                           </h3>
                           <p className="max-w-sm mt-3 text-xs leading-relaxed text-muted-foreground">
-                            {active
-                              ? 'Turn on the preview to see exactly what your audience sees.'
-                              : 'Preview your incoming stream before connecting your audience.'}
+                            {!previewAllowed
+                              ? 'Input preview is disabled by instance policy.'
+                              : !inputConnected
+                                ? 'Start streaming from your encoder. Preview opens automatically when video arrives.'
+                                : 'Turn on preview to watch the incoming stream.'}
                           </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-6"
-                            disabled={!active && !data.allowPreLivePreview}
-                            onClick={() => setPreview(true)}
-                          >
-                            <Eye size={14} />
-                            Enable preview
-                          </Button>
+                          {inputConnected && previewAllowed && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-6"
+                              disabled={!previewAllowed || !inputConnected}
+                              onClick={() => setPreview(true)}
+                            >
+                              <Eye size={14} />
+                              Enable preview
+                            </Button>
+                          )}
                         </div>
                       )}
                       {!preview && (
@@ -790,23 +833,29 @@ export function Dashboard() {
                       <div className="flex gap-4 text-[11px] text-muted-foreground">
                         <span className="flex items-center gap-1.5">
                           <Signal size={13} />{' '}
-                          {!active
-                            ? !preview
-                              ? 'Input preview paused'
-                              : previewState === 'playing'
-                                ? 'Input connected · Not live'
-                                : previewState === 'unsupported'
-                                  ? 'Preview codec unsupported'
-                                  : previewState === 'paused'
-                                    ? 'Preview playback paused'
-                                    : previewState === 'connecting'
-                                      ? 'Checking incoming video…'
-                                      : 'Waiting for incoming video'
-                            : channel.state === 'live'
-                              ? 'Input healthy'
-                              : channel.state === 'fallback'
-                                ? 'Fallback active'
-                                : 'Awaiting live input'}
+                          {!inputConnected
+                            ? 'No incoming stream'
+                            : !active
+                              ? !preview
+                                ? !inputConnected
+                                  ? 'No incoming stream'
+                                  : 'Input preview paused'
+                                : previewState === 'playing'
+                                  ? 'Input connected · Not live'
+                                  : previewState === 'unsupported'
+                                    ? 'Preview codec unsupported'
+                                    : previewState === 'offline'
+                                      ? 'Stream ended'
+                                      : previewState === 'paused'
+                                        ? 'Preview playback paused'
+                                        : previewState === 'connecting'
+                                          ? 'Checking incoming video…'
+                                          : 'Waiting for incoming video'
+                              : channel.state === 'live'
+                                ? 'Input healthy'
+                                : channel.state === 'fallback'
+                                  ? 'Fallback active'
+                                  : 'Awaiting live input'}
                         </span>
                         <span className="hidden sm:flex items-center gap-1.5">
                           <ServerIcon size={13} />
@@ -1319,7 +1368,6 @@ export function Dashboard() {
                     onClick={async () => {
                       if (await command({ action: 'stop', channelId: channel?.id })) {
                         setModal(null);
-                        setPreview(null);
                       }
                     }}
                   >

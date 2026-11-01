@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { spawn, execFileSync } from 'node:child_process';
@@ -13,8 +13,13 @@ assert.ok(new URL(process.env.DATABASE_URL!).pathname.endsWith('_preview_admin_v
 const nodeId = randomUUID(),
   channelId = randomUUID();
 const paths: string[] = [];
+let publishing = true;
 const upstream = createServer((req, res) => {
   paths.push(req.url!);
+  if (!publishing) {
+    res.writeHead(404).end('No stream');
+    return;
+  }
   res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end('#EXTM3U\n');
 });
 upstream.listen(0, '127.0.0.1');
@@ -93,6 +98,13 @@ try {
   await sql`insert into media_server(id,"workspaceId",name,host,region) values(${nodeId},${workspaceId},'Preview node','localhost','Test')`;
   await sql`insert into channel(id,"workspaceId","serverId",name,protocol,"ingestKey") values(${channelId},${workspaceId},${nodeId},'Preview fixture','srt','private-test-key')`;
   const url = base + `/api/preview/${channelId}/index.m3u8`;
+  const statusUrl = base + `/api/preview/${channelId}/status.json`;
+  assert.equal((await fetch(statusUrl)).status, 401);
+  publishing = false;
+  assert.deepEqual(await (await fetch(statusUrl, { headers })).json(), { connected: false });
+  publishing = true;
+  assert.deepEqual(await (await fetch(statusUrl, { headers })).json(), { connected: true });
+  assert.equal(paths.at(-1), `/input_${channelId}/index.m3u8`);
   assert.equal((await fetch(url)).status, 401);
   assert.equal((await fetch(url, { headers })).status, 200);
   assert.equal(paths.at(-1), `/input_${channelId}/index.m3u8`);
@@ -100,8 +112,42 @@ try {
     (await sql`select desired from channel where id=${channelId}`)[0].desired,
     'stopped',
   );
+  const agentToken = randomUUID(),
+    agentInstance = randomUUID();
+  await sql`update media_server set "agentTokenHash"=${createHash('sha256').update(agentToken).digest('hex')},"agentInstance"=${agentInstance},"heartbeatAt"=now() where id=${nodeId}`;
+  for (const upstreamStatus of [200, 404]) {
+    const pending = fetch(statusUrl, { headers });
+    let ticket: { id: string; path: string } | undefined;
+    for (let i = 0; i < 50; i++) {
+      ticket = (
+        await sql`select id,path from node_preview where "nodeId"=${nodeId} limit 1`
+      )[0] as typeof ticket;
+      if (ticket) break;
+      await delay(50);
+    }
+    assert.ok(ticket);
+    assert.equal(ticket.path, `input_${channelId}/index.m3u8`);
+    const reply = await fetch(base + `/api/nodes/agent/preview/${ticket.id}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${agentToken}`,
+        'x-node-id': nodeId,
+        'x-node-instance': agentInstance,
+        'x-preview-status': String(upstreamStatus),
+        'content-type': 'application/vnd.apple.mpegurl',
+      },
+      body: upstreamStatus === 200 ? '#EXTM3U\n' : 'No stream',
+    });
+    assert.equal(reply.status, 204);
+    assert.deepEqual(await (await pending).json(), { connected: upstreamStatus === 200 });
+  }
+  await sql`update media_server set "heartbeatAt"=now()-interval '30 seconds' where id=${nodeId}`;
+  assert.deepEqual(await (await fetch(statusUrl, { headers })).json(), { connected: false });
+  assert.equal((await sql`select id from node_preview where "nodeId"=${nodeId}`).length, 0);
+  await sql`update media_server set "agentTokenHash"=null,"agentInstance"=null where id=${nodeId}`;
   await sql`insert into instance_setting(key,value) values('allowPreLivePreview','false'::jsonb)`;
   assert.equal((await fetch(url, { headers })).status, 403);
+  assert.equal((await fetch(statusUrl, { headers })).status, 403);
   assert.equal(
     (await fetch(base + `/api/preview/${channelId}/segment.mp4`, { headers })).status,
     403,
@@ -109,6 +155,8 @@ try {
   await sql`update channel set desired='running' where id=${channelId}`;
   assert.equal((await fetch(url, { headers })).status, 200);
   assert.equal(paths.at(-1), `/program_${channelId}/index.m3u8`);
+  assert.deepEqual(await (await fetch(statusUrl, { headers })).json(), { connected: true });
+  assert.equal(paths.at(-1), `/input_${channelId}/index.m3u8`);
   await sql`update channel set desired='stopped' where id=${channelId}`;
   await sql`delete from instance_setting where key='allowPreLivePreview'`;
   const context = await browser.newContext();
@@ -121,7 +169,15 @@ try {
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  let inputAvailable = false;
   await page.route('**/api/preview/**', (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/status.json'))
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ connected: inputAvailable }),
+      });
+    if (!inputAvailable) return route.fulfill({ status: 404, body: 'No incoming stream' });
     const name = basename(new URL(route.request().url()).pathname);
     return route.fulfill({
       status: 200,
@@ -131,6 +187,9 @@ try {
   });
   await page.goto(base);
   await page.getByRole('button', { name: 'Go live', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No incoming stream', exact: true }).waitFor();
+  assert.equal(await page.locator('video').count(), 0);
+  inputAvailable = true;
   await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
   const video = page.getByLabel('Incoming stream preview');
   await page.getByText('Input connected · Not live', { exact: true }).waitFor();
@@ -160,19 +219,49 @@ try {
   await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Reconnect preview', exact: true }).click();
   await page.getByText('Input connected · Not live', { exact: true }).waitFor();
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (v: HTMLVideoElement) => Number.isFinite(v.duration) && v.duration > 0 && v.readyState >= 2,
+      ),
+    )
+    .toBe(true);
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.currentTime = Math.max(0, v.duration - 0.5);
+    v.playbackRate = 4;
+  });
+  inputAvailable = false;
+  await page
+    .getByRole('heading', { name: 'No incoming stream', exact: true })
+    .waitFor({ timeout: 15000 });
+  assert.equal(await page.locator('video').count(), 0);
+  inputAvailable = true;
+  await page.getByText('Input connected · Not live', { exact: true }).waitFor({ timeout: 15000 });
+  await video.evaluate((v: HTMLVideoElement) => {
+    v.playbackRate = 1;
+  });
   await page.getByRole('button', { name: 'Disable preview', exact: true }).click();
   await page.getByText('Input preview paused', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Enable preview', exact: true }).click();
   await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await sql`update channel set desired='running',state='live',"sessionId"=${randomUUID()} where id=${channelId}`;
+  await page.getByRole('button', { name: 'End stream', exact: true }).click();
+  await page.getByRole('button', { name: 'End all destinations', exact: true }).click();
+  await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
+  inputAvailable = false;
+  await page.getByRole('heading', { name: 'No incoming stream', exact: true }).waitFor();
+  assert.equal(await page.locator('video').count(), 0);
+  inputAvailable = true;
+  await page.getByText('Input connected · Not live', { exact: true }).waitFor({ timeout: 15000 });
   assert.deepEqual(errors, []);
   assert.equal(
     (await sql`select desired from channel where id=${channelId}`)[0].desired,
     'stopped',
   );
   console.log(
-    'Pre-live input routing, policy enforcement, program routing, default preview, pause/resume, custom playback/audio/fullscreen controls, mobile layout and session isolation passed.',
+    'No publisher means no player; publisher arrival opens preview, departure removes it, reconnection reopens it; pre-live input routing, policy enforcement, program routing, default preview, pause/resume, custom playback/audio/fullscreen controls, mobile layout and session isolation passed.',
   );
 } finally {
   await browser.close();
