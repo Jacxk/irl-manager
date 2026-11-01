@@ -85,8 +85,6 @@ export async function removeNode(
     const script = await readFile(path.join(source, 'installer/uninstall.sh'), 'utf8');
     let run: (phase: 'verify' | 'apply', allow: boolean) => Promise<void>;
     if (job.mode === 'local') {
-      if (process.env.ENABLE_LOCAL_INSTALL !== '1')
-        throw new Error('Local node operations are disabled on this installer.');
       directory = await mkdtemp(path.join(root, 'removal-'));
       const file = path.join(directory, 'uninstall.sh');
       await writeFile(file, script, { mode: 0o700 });

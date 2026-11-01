@@ -1,6 +1,16 @@
 'use client';
-import Link from 'next/link';
+import Image from 'next/image';
 import { toast } from 'sonner';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useDisplayDefaults } from './instance-display';
+import Link from 'next/link';
 import { NodeInstaller, useNodeInstallations } from './node-installer';
 import { NodeRemoval } from './node-removal';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -155,6 +165,7 @@ function Field({
   );
 }
 export function Dashboard() {
+  const display = useDisplayDefaults();
   const router = useRouter();
   const [now, setNow] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
@@ -381,7 +392,7 @@ export function Dashboard() {
       )}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-[#151815] transition-transform lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-card transition-transform lg:translate-x-0',
           mobile ? 'translate-x-0' : '-translate-x-full',
         )}
       >
@@ -389,10 +400,14 @@ export function Dashboard() {
           href="/"
           className="flex h-[84px] items-center gap-2.5 px-6 text-lg font-semibold tracking-tight"
         >
-          <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <Radio size={20} />
-          </span>
-          irl<span className="-ml-1.5 font-normal text-muted-foreground">manager</span>
+          {display.logoUrl ? (
+            <Image unoptimized src={display.logoUrl} alt="" width={32} height={32} />
+          ) : (
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Radio size={20} />
+            </span>
+          )}
+          <span className="truncate">{display.instanceName}</span>
         </Link>
         <div className="mx-4 mb-7 rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2.5">
@@ -445,6 +460,14 @@ export function Dashboard() {
               Manage scenes <ArrowUpRight size={13} />
             </button>
           </div>
+          {data.user.instanceRole === 'admin' && (
+            <Link
+              href={`/admin?returnTo=${encodeURIComponent(view === 'Overview' ? '/' : `/?view=${view.toLowerCase()}`)}`}
+              className="mt-5 block text-sm text-primary"
+            >
+              Instance administration →
+            </Link>
+          )}
           <div className="mt-5 flex items-center gap-2.5 border-t border-border pt-4">
             <span className="grid size-8 place-items-center rounded-full bg-muted text-xs">
               {data.user.name.slice(0, 2).toUpperCase()}
@@ -920,7 +943,9 @@ export function Dashboard() {
                             <div>
                               <p className="text-xs leading-relaxed">{e.message}</p>
                               <p className="mt-1 text-[10px] text-muted-foreground">
-                                {new Date(e.createdAt).toLocaleTimeString([], {
+                                {new Date(e.createdAt).toLocaleTimeString(display.language, {
+                                  timeZone: display.timezone,
+                                  hour12: display.hour12,
                                   hour: '2-digit',
                                   minute: '2-digit',
                                 })}
@@ -1031,20 +1056,18 @@ export function Dashboard() {
         {view === 'Nodes' && (
           <section className="surface overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
-                  <tr>
+              <Table aria-label="Media nodes">
+                <TableHeader>
+                  <TableRow>
                     {['Node', 'Region', 'Status', 'Node ID', 'Actions'].map((h) => (
-                      <th key={h} className="p-5 font-medium">
-                        {h}
-                      </th>
+                      <TableHead key={h}>{h}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {data.servers.map((s) => (
-                    <tr className="border-b border-border last:border-0" key={s.id}>
-                      <td className="p-5">
+                    <TableRow key={s.id}>
+                      <TableCell>
                         <div className="flex items-center gap-3">
                           <ServerIcon size={18} className="text-muted-foreground" />
                           <div>
@@ -1061,9 +1084,9 @@ export function Dashboard() {
                             )}
                           </div>
                         </div>
-                      </td>
-                      <td className="p-5 text-xs text-muted-foreground">{s.region}</td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{s.region}</TableCell>
+                      <TableCell>
                         <Status
                           state={
                             online(s.heartbeatAt)
@@ -1073,16 +1096,16 @@ export function Dashboard() {
                                 : 'offline'
                           }
                         />
-                      </td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell>
                         <button
                           className="font-mono text-xs text-muted-foreground hover:text-primary flex gap-2 items-center"
                           onClick={() => void copy(s.id)}
                         >
                           {s.id.slice(0, 8)}…<Clipboard size={13} />
                         </button>
-                      </td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell>
                         {admin && nodeJobs.get(s.id) && (
                           <Button
                             variant="outline"
@@ -1114,11 +1137,11 @@ export function Dashboard() {
                             <Trash2 size={14} />
                           </Button>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             {!data.servers.length && (
               <div className="text-center p-14">

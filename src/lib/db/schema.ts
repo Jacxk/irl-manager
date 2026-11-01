@@ -3,6 +3,7 @@ import {
   text,
   timestamp,
   integer,
+  bigint,
   boolean,
   jsonb,
   uniqueIndex,
@@ -11,6 +12,8 @@ export const user = pgTable('user', {
   id: text().primaryKey(),
   name: text().notNull(),
   email: text().notNull().unique(),
+  instanceRole: text().notNull().default('user'),
+  active: boolean().notNull().default(true),
   emailVerified: boolean().notNull().default(false),
   image: text(),
   createdAt: timestamp().notNull().defaultNow(),
@@ -77,6 +80,8 @@ export const mediaServer = pgTable('media_server', {
   name: text().notNull(),
   host: text().notNull(),
   region: text().notNull().default('Local'),
+  shared: boolean().notNull().default(false),
+  available: boolean().notNull().default(true),
   heartbeatAt: timestamp(),
   removalRequestedAt: timestamp(),
   agentTokenHash: text(),
@@ -154,6 +159,26 @@ export const invitation = pgTable(
   },
   (table) => [uniqueIndex('invitation_workspace_user').on(table.workspaceId, table.userId)],
 );
+
+export const instanceSetting = pgTable('instance_setting', {
+  key: text().primaryKey(),
+  value: jsonb(),
+  revision: integer().notNull().default(1),
+  updatedAt: timestamp().notNull().defaultNow(),
+});
+export const adminAudit = pgTable('admin_audit', {
+  id: text().primaryKey(),
+  actorId: text().notNull(),
+  target: text().notNull(),
+  action: text().notNull(),
+  createdAt: timestamp().notNull().defaultNow(),
+});
+export const rateLimit = pgTable('rate_limit', {
+  id: text().primaryKey(),
+  key: text().notNull().unique(),
+  count: integer().notNull(),
+  lastRequest: bigint({ mode: 'number' }).notNull(),
+});
 
 export const nodeInstallation = pgTable('node_installation', {
   operation: text().notNull().default('install'),

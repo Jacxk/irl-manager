@@ -1,10 +1,11 @@
+import { readSettings } from '@/lib/settings';
 import { and, count, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { mediaServer, nodeInstallation, channel, destination, event } from '@/lib/db/schema';
 import { ApiError } from '@/lib/access';
 import { encrypt, decrypt } from '@/lib/crypto';
-import { installerAccess, apiFailure, localInstallAllowed } from '@/lib/nodes/security';
+import { installerAccess, apiFailure } from '@/lib/nodes/security';
 import { busyInstallationStatuses, deleteNodeData } from '@/lib/nodes/removal';
 async function getNode(id: string, workspaceId: string) {
   const node = await db.query.mediaServer.findFirst({
@@ -20,6 +21,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await installerAccess();
+    const { values: settings } = await readSettings();
     const { node, installation } = await getNode((await params).id, ctx.workspace.id);
     const ids = (
       await db.select({ id: channel.id }).from(channel).where(eq(channel.serverId, node.id))
@@ -41,12 +43,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         node: { id: node.id, name: node.name, host: node.host },
         managed: !!installation,
         neverInstalled,
-        canRemove:
-          !!installation &&
-          (neverInstalled ||
-            !!installation.remoteRemovedAt ||
-            installation.mode !== 'local' ||
-            localInstallAllowed(ctx.user.email)),
+        canRemove: settings.allowNodeRemoval && !!installation,
         counts: {
           channels: ids.length,
           destinations: destinations[0].value,
@@ -96,6 +93,9 @@ const requestSchema = z.object({
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await installerAccess(request);
+    const { values: settings } = await readSettings();
+    if (!settings.allowNodeRemoval)
+      throw new ApiError(403, 'Permanent node removal is disabled by instance policy.');
     const id = (await params).id;
     const body = requestSchema.parse(await request.json());
     let immediate = false;
@@ -121,16 +121,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (['queued_remove', 'removing', 'remote_removed'].includes(installation.status))
         throw new ApiError(409, 'Permanent removal is already in progress.');
       immediate = !installation.startedAt && installation.operation !== 'remove';
-      if (
-        !immediate &&
-        !installation.remoteRemovedAt &&
-        installation.mode === 'local' &&
-        !localInstallAllowed(ctx.user.email)
-      )
-        throw new ApiError(
-          403,
-          'Local removal requires an administrator listed in LOCAL_INSTALL_ADMIN_EMAILS.',
-        );
       let encryptedCredentials = installation.encryptedCredentials;
       if (!immediate && installation.mode === 'ssh' && !installation.remoteRemovedAt) {
         const saved: Record<string, string> = encryptedCredentials

@@ -32,6 +32,7 @@ npm ci
 npm run setup
 docker compose up -d db
 npm run db:push
+npm run db:migrate-admin
 npm run dev
 ```
 
@@ -45,14 +46,7 @@ In **Nodes → Add node**, choose **Install locally** or **Install on a remote s
 
 ## Install locally
 
-The installer uses the current Docker host. Docker Engine/Desktop and Compose must be available to the installer process. Enable local setup for your trusted account in `.env`, then restart the app and installer:
-
-```dotenv
-ENABLE_LOCAL_INSTALL=1
-LOCAL_INSTALL_ADMIN_EMAILS=you@example.com
-```
-
-The allowlist is separate from workspace roles: public account registration does not grant access to the app server’s Docker host. Only listed workspace administrators can start a local install.
+The installer uses the current Docker host. Docker Engine/Desktop and Compose must be available to the installer process. Instance administrators control local setup in **Admin → Node operations**. Workspace owners and administrators can install when this policy allows it; no environment enable flag or email allowlist is required.
 
 Choose **Install locally**, enter the public hostname/IP that your encoder will use, review the control-panel URL, and press **Install locally**. During development, a `localhost` control URL is mapped to `host.docker.internal` for the containerized agent. The public ingest hostname should be reachable from your encoder.
 
@@ -167,3 +161,19 @@ The API integration suite creates isolated accounts and cleans them up unless fi
 Provisioning and remote-media integration tests additionally require a disposable Docker host and SSH target; see [validation notes](docs/VALIDATION.md).
 
 See [the implementation plan](docs/PLAN.md) for architecture, current scope, and remaining milestones.
+
+## Instance administration
+
+Run `npm run db:migrate-admin` against the application database before starting this version. The additive migration promotes the sole existing account to instance admin once. New accounts always default to `user`. On a new or multi-account installation, create the intended account and run `ADMIN_BOOTSTRAP_EMAIL=you@example.com npm run db:migrate-admin` when no active admin exists. Workspace roles do not grant instance-admin access.
+
+Open `/admin` from the dashboard's Instance administration link. Configure branding, announcements, UI locale/timezone/theme, access policies, registration, authentication, personal-node policies, and optional shared nodes. Account controls include admin/user roles, deactivation/reactivation, session revocation, and single-use password reset links that expire after 30 minutes. Deliver reset links privately; email delivery is not configured by this release. Deactivation preserves running streams and workspace data.
+
+Set `LOCK_BY_ENVIRONMENT=true` to lock settings with an explicitly supplied environment variable. Otherwise saved overrides take precedence over environment values, then built-in defaults. Remove an override to restore the environment/default. Changes apply on the next request/page load; session lifetime applies to newly issued sessions. Changing the public URL immediately changes authentication and allowed mutation origin. Database credentials, encryption keys, signing secrets, and deployment controls stay outside UI editing.
+
+Shared nodes are available to all workspaces and must first be registered in the admin's own workspace. Disabling availability or stopping sharing prevents new assignments without stopping existing channels. This does not provision infrastructure or configure remote workers. Streaming defaults and encoding remain outside instance administration.
+
+`npm test` includes settings precedence and validation tests. `tests/admin.integration.ts` requires a running app configured with `LOCK_BY_ENVIRONMENT=true` and `BETTER_AUTH_URL` set, plus a **clean disposable** PostgreSQL database with the application schema and a name ending in `_admin_verify`. Set `ADMIN_TEST_DATABASE_URL` to that database and `ADMIN_TEST_URL` to the app URL, then run `npx tsx tests/admin.integration.ts`. Set `ADMIN_TEST_UI=true` to also verify desktop/mobile UI with Playwright. The suite creates test accounts and nodes and leaves them in that disposable database for inspection. Never point the verification app at your normal database.
+
+### Node operations policies
+
+Instance administrators can use `/admin/node-operations` to allow local or SSH installation, control permanent removal, and set the default node control origin for new setups. These settings use the standard saved overrides, environment locks, reset, and audit behavior. Environment keys are `ALLOW_LOCAL_NODE_INSTALLATION`, `ALLOW_SSH_NODE_INSTALLATION`, `ALLOW_NODE_REMOVAL` (boolean `true`/`false`), and `NODE_CONTROL_URL` (blank falls back to the public application URL). Installation policies govern new requests and setup edits; removal policy governs new removal requests. Queued operations continue and existing node connections are unchanged. Local installation and permanent removal are controlled directly by admin settings; no enable flag or email allowlist is required. Insecure remote HTTP remains a deployment-only development option. The installation wizard enforces personal-node permissions and workspace quotas.

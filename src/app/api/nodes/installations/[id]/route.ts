@@ -1,3 +1,4 @@
+import { readSettings } from '@/lib/settings';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -8,7 +9,7 @@ import {
   installerAccess,
   apiFailure,
   validControlUrl,
-  localInstallAllowed,
+  localNodeInstallationAllowed,
 } from '@/lib/nodes/security';
 const configSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -61,13 +62,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         where: and(eq(nodeInstallation.id, id), eq(nodeInstallation.workspaceId, ctx.workspace.id)),
       });
       if (!job) throw new ApiError(404, 'Installation not found.');
+      const { values: settings } = await readSettings();
+      if (job.mode === 'ssh' && !settings.allowSshNodeInstallation)
+        throw new ApiError(403, 'SSH node installation is disabled by instance policy.');
       if (job.operation === 'remove')
         throw new ApiError(409, 'This node is being removed. Use the removal dialog to retry.');
-      if (job.mode === 'local' && !localInstallAllowed(ctx.user.email))
-        throw new ApiError(
-          403,
-          'Local installation requires an account in LOCAL_INSTALL_ADMIN_EMAILS.',
-        );
+      if (job.mode === 'local' && !(await localNodeInstallationAllowed()))
+        throw new ApiError(403, 'Local installation is disabled in Node operations settings.');
       if (body.action === 'save') {
         if (!['draft', 'awaiting_trust', 'failed'].includes(job.status))
           throw new ApiError(
