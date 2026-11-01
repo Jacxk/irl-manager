@@ -1,9 +1,11 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, lt, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { nodePreview } from '../db/schema';
 import { ApiError } from '../access';
-export async function remotePreview(nodeId: string, path: string) {
+export async function remotePreview(nodeId: string, path: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const id = randomUUID();
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`preview:${nodeId}`}))`);
@@ -23,6 +25,7 @@ export async function remotePreview(nodeId: string, path: string) {
   try {
     const deadline = Date.now() + 18000;
     while (Date.now() < deadline) {
+      signal?.throwIfAborted();
       const result = await db.query.nodePreview.findFirst({ where: eq(nodePreview.id, id) });
       if (result?.status)
         return new Response(Buffer.from(result.body ?? '', 'base64'), {
@@ -32,7 +35,7 @@ export async function remotePreview(nodeId: string, path: string) {
             'Cache-Control': 'no-store',
           },
         });
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200, undefined, { signal });
     }
     return new Response('Node preview timed out.', { status: 504 });
   } finally {

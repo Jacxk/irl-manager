@@ -1,3 +1,5 @@
+import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
+import { readCommandBody } from '@/lib/request-body';
 import { readSettings } from '@/lib/settings';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, eq, or, sql } from 'drizzle-orm';
@@ -52,8 +54,8 @@ export async function POST(request: Request) {
   try {
     const ctx = await installerAccess(request);
     const { values: settings } = await readSettings();
-    const { mode } = await request.json();
-    if (!['local', 'ssh'].includes(mode))
+    const { mode } = await readCommandBody(request);
+    if (mode !== 'local' && mode !== 'ssh')
       throw new ApiError(400, 'Choose local installation or SSH.');
     if (mode === 'local' && !(await localNodeInstallationAllowed()))
       throw new ApiError(409, 'Local installation is disabled in Node operations settings.');
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
       nodeId = randomUUID(),
       token = randomBytes(32).toString('hex');
     await db.transaction(async (tx) => {
+      await lockWorkspaceAccess(tx, ctx);
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.workspace.id}))`);
       const nodes = await tx
         .select({ id: mediaServer.id })

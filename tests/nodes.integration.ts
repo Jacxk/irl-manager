@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db, sql } from '../src/lib/db';
 import { channel, mediaServer, nodeInstallation } from '../src/lib/db/schema';
 import { decrypt } from '../src/lib/crypto';
+const apiOnly = process.argv.includes('--api-only');
 const fixturePath = '/tmp/irl-manager-fixture.json';
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 const base = process.env.TEST_BASE_URL ?? 'http://localhost:3000';
@@ -49,16 +50,24 @@ async function until(label: string, check: () => Promise<boolean>, timeout = 600
 }
 try {
   await api('/api/nodes/installations', 'GET', undefined, 403, fixture.outsider.cookie);
-  await api('/api/nodes/installations', 'POST', { mode: 'local' }, 409);
+  const capabilitiesBefore = await api('/api/nodes/installations');
+  if (!capabilitiesBefore.localEnabled)
+    await api('/api/nodes/installations', 'POST', { mode: 'local' }, 409);
   fixture.installation ??= await api('/api/nodes/installations', 'POST', { mode: 'ssh' });
   writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
-  const key = readFileSync('/tmp/irl-installer-test-key', 'utf8');
+  const key = apiOnly
+    ? generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+        publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      }).privateKey
+    : readFileSync('/tmp/irl-installer-test-key', 'utf8');
   const config = {
     ...fixture.installation.config,
     name: 'SSH integration node',
     host: 'localhost',
     region: 'Test',
-    controlUrl: 'http://host.docker.internal:3000',
+    controlUrl: base.replace('localhost', 'host.docker.internal'),
     sshHost: '127.0.0.1',
     sshPort: 22222,
     sshUser: 'root',
@@ -102,8 +111,25 @@ try {
     .update(channel)
     .set({ serverId: saved.nodeId })
     .where(eq(channel.id, fixture.channel.id));
+  assert.equal(
+    (
+      await fetch(base + '/api/nodes/agent/config', {
+        headers: { ...headers, 'x-node-instance': 'invalid-instance' },
+      })
+    ).status,
+    400,
+    'Malformed agent identity is a client error',
+  );
   const configResponse = await fetch(base + '/api/nodes/agent/config', { headers });
   assert.equal(configResponse.status, 200);
+  for (const body of ['{', 'null', '[]', '"report"']) {
+    const invalid = await fetch(base + '/api/nodes/agent/report', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body,
+    });
+    assert.equal(invalid.status, 400, 'Invalid report envelope must be rejected');
+  }
   const assigned = await configResponse.json();
   assert.equal(assigned.channels.length, 1);
   assert.equal(assigned.channels[0].id, fixture.channel.id);
@@ -152,44 +178,57 @@ try {
   console.log(
     'PASS draft persistence, encrypted SSH credentials, secret redaction, node-scoped configuration, agent lease, and stale-session report rejection',
   );
-  await api(`/api/nodes/installations/${saved.id}`, 'PATCH', { action: 'check' });
-  await until(
-    'SSH host fingerprint is persisted for explicit verification',
-    async () => (await job()).status === 'awaiting_trust',
-  );
-  const checked = await job();
-  assert.match(checked.fingerprint, /^SHA256:/);
-  await api(`/api/nodes/installations/${saved.id}`, 'PATCH', { action: 'trust' });
-  await until(
-    'SSH one-click installation builds services and connects the remote agent',
-    async () => {
-      const j = await job();
-      if (j.status === 'failed')
-        throw new Error(
-          j.error +
-            '\n' +
-            j.logs
-              .slice(-8)
-              .map((l: { message: string }) => l.message)
-              .join('\n'),
-        );
-      return j.status === 'complete';
-    },
-    900000,
-  );
-  const installed = await job();
-  assert.equal(installed.hasCredentials, false);
-  assert.ok(installed.logs.length > 5);
-  assert.ok(!JSON.stringify(installed).includes(nodeToken));
-  const capabilities = await api('/api/nodes/installations');
-  assert.equal(
-    capabilities.localInstalled,
-    true,
-    'Same Docker machine must be recognized even when installed through SSH',
-  );
-  fixture.remoteNodeId = saved.nodeId;
-  writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
-  console.log('PASS completed setup clears SSH credentials and detects the current host singleton');
+  if (apiOnly) {
+    await db
+      .update(channel)
+      .set({ serverId: fixture.server.id })
+      .where(eq(channel.id, fixture.channel.id));
+    await api(`/api/nodes/installations/${saved.id}`, 'PATCH', { action: 'discard' });
+    delete fixture.installation;
+    writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
+    console.log('API-only node checks passed; SSH deployment deliberately not invoked.');
+  } else {
+    await api(`/api/nodes/installations/${saved.id}`, 'PATCH', { action: 'check' });
+    await until(
+      'SSH host fingerprint is persisted for explicit verification',
+      async () => (await job()).status === 'awaiting_trust',
+    );
+    const checked = await job();
+    assert.match(checked.fingerprint, /^SHA256:/);
+    await api(`/api/nodes/installations/${saved.id}`, 'PATCH', { action: 'trust' });
+    await until(
+      'SSH one-click installation builds services and connects the remote agent',
+      async () => {
+        const j = await job();
+        if (j.status === 'failed')
+          throw new Error(
+            j.error +
+              '\n' +
+              j.logs
+                .slice(-8)
+                .map((l: { message: string }) => l.message)
+                .join('\n'),
+          );
+        return j.status === 'complete';
+      },
+      900000,
+    );
+    const installed = await job();
+    assert.equal(installed.hasCredentials, false);
+    assert.ok(installed.logs.length > 5);
+    assert.ok(!JSON.stringify(installed).includes(nodeToken));
+    const capabilities = await api('/api/nodes/installations');
+    assert.equal(
+      capabilities.localInstalled,
+      true,
+      'Same Docker machine must be recognized even when installed through SSH',
+    );
+    fixture.remoteNodeId = saved.nodeId;
+    writeFileSync(fixturePath, JSON.stringify(fixture), { mode: 0o600 });
+    console.log(
+      'PASS completed setup clears SSH credentials and detects the current host singleton',
+    );
+  }
 } finally {
   await sql.end();
 }

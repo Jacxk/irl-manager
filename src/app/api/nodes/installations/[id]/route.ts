@@ -1,3 +1,5 @@
+import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
+import { readCommandBody } from '@/lib/request-body';
 import { readSettings } from '@/lib/settings';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -46,8 +48,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const ctx = await installerAccess(request);
     const { id } = await params;
-    const body = await request.json();
+    const body = await readCommandBody(request);
     await db.transaction(async (tx) => {
+      await lockWorkspaceAccess(tx, ctx);
       const target = await tx.query.nodeInstallation.findFirst({
         where: and(eq(nodeInstallation.id, id), eq(nodeInstallation.workspaceId, ctx.workspace.id)),
       });

@@ -71,7 +71,7 @@ The app installs onto a server you provide; cloud VM creation is separate. SRTLA
 
 In **Nodes**, use the red trash button. The confirmation shows the affected channels, destinations, and history. Type the exact node name and acknowledge permanent deletion. Removing a node ends its broadcasts and deletes its channels, scenes, stream keys, previews, history, and installation logs.
 
-For remote nodes, enter SSH access again: successful setup clears those credentials. Removal pins the original SSH fingerprint and checks the Docker machine and installation identity before deleting anything. Local removal requires the same administrator allowlist as local installation. Uninstall removes the node's containers, private volumes/networks, installation directory, credentials, and machine claim. Docker and unrelated applications remain installed. Manually registered legacy nodes cannot be automatically uninstalled because their ownership is unverified.
+For remote nodes, enter SSH access again: successful setup clears those credentials. Removal pins the original SSH fingerprint and checks the Docker machine and installation identity before deleting anything. Local removal requires workspace authorization and the instance node-removal policy. Uninstall removes the node's containers, private volumes/networks, installation directory, credentials, and machine claim. Docker and unrelated applications remain installed. Manually registered legacy nodes cannot be automatically uninstalled because their ownership is unverified.
 
 The job continues when the dialog closes. Reopen **View removal** to see its current step and logs. If the host cannot be reached or verification fails, application records remain available for retry. If remote uninstall succeeds but database cleanup fails, retry finishes deleting the saved data without needing SSH again.
 
@@ -109,7 +109,7 @@ Set `BETTER_AUTH_URL` and `NODE_CONTROL_URL` to the website’s public HTTPS ori
 docker compose up -d --build db web installer
 ```
 
-The installer container includes the source bundle and Docker CLI, and mounts the host Docker socket plus a private persistent installer volume. That socket gives the installer host-level Docker access; keep the installer and local allowlist limited to trusted administrators. The streaming stack is deployed separately by the wizard as the `irl-node` Compose project on each chosen host. Avoid starting the old manual streaming profile on the same host because its ingest ports overlap.
+The installer container includes the source bundle and Docker CLI, and mounts the host Docker socket plus a private persistent installer volume. That socket gives the installer host-level Docker access; restrict Docker socket access to the installer and trusted host administrators; control local installation through instance policies. The streaming stack is deployed separately by the wizard as the `irl-node` Compose project on each chosen host. Avoid starting the old manual streaming profile on the same host because its ingest ports overlap.
 
 For a reverse proxy, allow at least **10 MiB request bodies** and **30-second upstream timeouts** on the app routes. Node preview uploads are bounded to 8 MiB per segment. For nginx, include `client_max_body_size 10m;` and `proxy_read_timeout 30s;` in the application location/server configuration. Preserve the public Host and forwarded HTTPS headers.
 

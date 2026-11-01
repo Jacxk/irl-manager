@@ -1,3 +1,5 @@
+import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
+import { readCommandBody } from '@/lib/request-body';
 import { readSettings } from '@/lib/settings';
 import { and, count, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -97,9 +99,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!settings.allowNodeRemoval)
       throw new ApiError(403, 'Permanent node removal is disabled by instance policy.');
     const id = (await params).id;
-    const body = requestSchema.parse(await request.json());
+    const body = requestSchema.parse(await readCommandBody(request));
     let immediate = false;
     await db.transaction(async (tx) => {
+      await lockWorkspaceAccess(tx, ctx);
       const [node] = await tx
         .select()
         .from(mediaServer)

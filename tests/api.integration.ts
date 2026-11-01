@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { db, sql } from '../src/lib/db';
-import { user, workspace } from '../src/lib/db/schema';
+import { user, workspace, mediaServer, channel as channelTable } from '../src/lib/db/schema';
 import { eq, inArray } from 'drizzle-orm';
 const base = process.env.TEST_BASE_URL ?? 'http://localhost:3000';
 const suffix = randomUUID();
@@ -44,18 +44,30 @@ try {
   assert.equal((await fetch(`${base}/api/control`)).status, 401);
   const owner = await signup('owner');
   const outsider = await signup('outsider');
+  for (const path of ['/api/control', '/api/nodes/installations']) {
+    for (const body of ['{', 'null', '[]', '"command"']) {
+      const invalid = await fetch(base + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: base, Cookie: owner.cookie },
+        body,
+      });
+      assert.equal(invalid.status, 400, `${path}: ${await invalid.text()}`);
+    }
+  }
   let one = await get(owner.cookie);
   const two = await get(outsider.cookie);
   workspaces.push(one.workspace.id, two.workspace.id);
   assert.notEqual(one.workspace.id, two.workspace.id);
   await command(owner.cookie, {
     action: 'createServer',
-    name: 'Integration server',
+    name: `Integration server ${suffix}`,
     host: 'localhost',
     region: 'Test',
   });
   one = await get(owner.cookie);
-  const server = one.servers[0];
+  const server = one.servers.find(
+    (s: { name: string }) => s.name === `Integration server ${suffix}`,
+  );
   await command(
     outsider.cookie,
     { action: 'createChannel', name: 'Forbidden', serverId: server.id, protocol: 'srt' },
@@ -92,7 +104,9 @@ try {
   one = await get(owner.cookie);
   assert.equal(one.destinations.length, 2);
   assert.ok(one.destinations.every((d: Record<string, unknown>) => !d.encryptedKey && !d.key));
-  const stored = await db.query.destination.findFirst();
+  const stored = await db.query.destination.findFirst({
+    where: eq((await import('../src/lib/db/schema')).destination.channelId, channel.id),
+  });
   assert.ok(stored && !stored.encryptedKey.includes('stream-one'));
   await command(owner.cookie, { action: 'start', channelId: channel.id }, 409); // Worker is offline.
   const rejected = await fetch(`${base}/api/control`, {
@@ -113,6 +127,24 @@ try {
   let other = await get(outsider.cookie);
   assert.equal(other.workspace.id, two.workspace.id);
   assert.equal(other.invitations.length, 1);
+  // Shared nodes need no personal node in the joining owner's workspace.
+  await db.update(mediaServer).set({ shared: true }).where(eq(mediaServer.id, server.id));
+  await command(outsider.cookie, {
+    action: 'createChannel',
+    name: 'Shared-node broadcast',
+    serverId: server.id,
+    protocol: 'srt',
+  });
+  await command(
+    outsider.cookie,
+    {
+      action: 'acceptInvitation',
+      invitationId: other.invitations[0].id,
+    },
+    409,
+  );
+  assert.equal((await get(outsider.cookie)).workspace.id, two.workspace.id);
+  await db.delete(channelTable).where(eq(channelTable.workspaceId, two.workspace.id));
   await command(outsider.cookie, {
     action: 'acceptInvitation',
     invitationId: other.invitations[0].id,

@@ -22,7 +22,13 @@ fi
 [ ! -L "$ROOT" ] || { echo 'Refusing to remove a symlinked install directory.' >&2; exit 1; }
 if [ "$(uname -s)" = Linux ] && command -v flock >/dev/null 2>&1; then
   exec 9>/tmp/irl-manager-node-install.lock
-  flock -w 60 9 || { echo 'Another node operation is running on this machine.' >&2; exit 1; }
+  # BusyBox flock supports -n but not util-linux's -w timeout option.
+  attempts=0
+  until flock -n 9; do
+    [ "$attempts" -lt 60 ] || { echo 'Another node operation is running on this machine.' >&2; exit 1; }
+    attempts=$((attempts + 1))
+    sleep 1
+  done
 fi
 step 'Verifying Docker host and node ownership'
 docker info >/dev/null
