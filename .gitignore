@@ -4,3 +4,5 @@ node_modules/
 .env.local
 *.tsbuildinfo
 __pycache__/
+
+.irl-installer/

@@ -78,6 +78,13 @@ export const mediaServer = pgTable('media_server', {
   host: text().notNull(),
   region: text().notNull().default('Local'),
   heartbeatAt: timestamp(),
+  removalRequestedAt: timestamp(),
+  agentTokenHash: text(),
+  encryptedAgentToken: text(),
+  agentInstance: text(),
+  agentLeaseAt: timestamp(),
+  machineId: text().unique(),
+  localSlot: text().unique(),
   createdAt: timestamp().notNull().defaultNow(),
 });
 export const channel = pgTable('channel', {
@@ -147,3 +154,55 @@ export const invitation = pgTable(
   },
   (table) => [uniqueIndex('invitation_workspace_user').on(table.workspaceId, table.userId)],
 );
+
+export const nodeInstallation = pgTable('node_installation', {
+  operation: text().notNull().default('install'),
+  removalVerifiedAt: timestamp(),
+  remoteRemovedAt: timestamp(),
+  startedAt: timestamp(),
+  id: text().primaryKey(),
+  nodeId: text()
+    .notNull()
+    .unique()
+    .references(() => mediaServer.id, { onDelete: 'cascade' }),
+  workspaceId: text()
+    .notNull()
+    .references(() => workspace.id, { onDelete: 'cascade' }),
+  mode: text().notNull(),
+  status: text().notNull().default('draft'),
+  step: text().notNull().default('configure'),
+  config: jsonb()
+    .$type<{
+      name: string;
+      host: string;
+      region: string;
+      controlUrl: string;
+      sshHost: string;
+      sshPort: number;
+      sshUser: string;
+      sshAuth?: 'key' | 'password';
+    }>()
+    .notNull(),
+  encryptedCredentials: text(),
+  fingerprint: text(),
+  logs: jsonb().$type<{ at: string; message: string }[]>().notNull().default([]),
+  error: text(),
+  updatedAt: timestamp().notNull().defaultNow(),
+  createdAt: timestamp().notNull().defaultNow(),
+});
+export const nodePreview = pgTable('node_preview', {
+  id: text().primaryKey(),
+  nodeId: text()
+    .notNull()
+    .references(() => mediaServer.id, { onDelete: 'cascade' }),
+  path: text().notNull(),
+  status: integer(),
+  contentType: text(),
+  body: text(),
+  expiresAt: timestamp().notNull(),
+});
+export const serviceHeartbeat = pgTable('service_heartbeat', {
+  id: text().primaryKey(),
+  machineId: text(),
+  at: timestamp().notNull().defaultNow(),
+});

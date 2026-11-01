@@ -1,12 +1,14 @@
 'use client';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import { NodeInstaller, useNodeInstallations } from './node-installer';
+import { NodeRemoval } from './node-removal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
-  Check,
   CircleHelp,
   Clipboard,
   Eye,
@@ -38,7 +40,7 @@ import { Switch } from '@/components/ui/switch';
 import { Preview } from './preview';
 import { authClient } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
-import type { DashboardData, Destination } from '@/lib/types';
+import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
   'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
@@ -81,6 +83,12 @@ function Status({ state }: { state: string }) {
     'retrying',
     'connecting',
     'ending',
+    'installing',
+    'checking',
+    'waiting',
+    'queued check',
+    'queued install',
+    'awaiting trust',
   ].includes(state);
   return (
     <span
@@ -161,7 +169,8 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [installationId, setInstallationId] = useState<string | null>(null);
+  const [removalNode, setRemovalNode] = useState<Server | null>(null);
   const [credentials, setCredentials] = useState<{
     host: string;
     path: string;
@@ -194,16 +203,13 @@ export function Dashboard() {
       clearInterval(timer);
     };
   }, [reload]);
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(''), 4000);
-    return () => clearTimeout(t);
-  }, [notice]);
   const channel = data?.channels.find((c) => c.id === selected) ?? data?.channels[0];
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
   const admin = data?.role !== 'operator';
+  const installations = useNodeInstallations(!!data && admin);
+  const nodeJobs = new Map(installations.jobs.map((job) => [job.nodeId, job]));
   async function command(payload: Record<string, unknown>) {
     setBusy(true);
     setError('');
@@ -216,9 +222,21 @@ export function Dashboard() {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
       await reload();
+      if (payload.action === 'start')
+        toast.success('Session requested. Connecting enabled destinations.');
+      if (payload.action === 'stop') toast.info('Ending the broadcast on all destinations.');
+      if (payload.action === 'fallback')
+        toast.info(
+          payload.enabled ? 'Fallback scene requested.' : 'Automatic scene switching restored.',
+        );
+      if (payload.action === 'toggleDestination')
+        toast.success(payload.enabled ? 'Destination enabled.' : 'Destination disabled.');
+      if (payload.action === 'deleteDestination') toast.success('Destination removed.');
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      setError(message);
+      toast.error(message);
       return null;
     } finally {
       setBusy(false);
@@ -226,6 +244,16 @@ export function Dashboard() {
   }
   function open(value: Modal) {
     setError('');
+    if (
+      value === 'node' &&
+      !installations.jobs.some(
+        (j) => j.id === installationId && j.status !== 'complete' && j.operation !== 'remove',
+      )
+    )
+      setInstallationId(
+        installations.jobs.find((j) => j.status !== 'complete' && j.operation !== 'remove')?.id ??
+          null,
+      );
     setModal(value);
   }
   async function showCredentials() {
@@ -239,7 +267,6 @@ export function Dashboard() {
     e.preventDefault();
     const values = Object.fromEntries(new FormData(e.currentTarget));
     let payload: Record<string, unknown> = {};
-    if (modal === 'node') payload = { action: 'createServer', ...values };
     if (modal === 'channel') payload = { action: 'createChannel', ...values };
     if (modal === 'destination')
       payload = {
@@ -258,7 +285,7 @@ export function Dashboard() {
     if (modal === 'member') payload = { action: 'addMember', ...values };
     if (await command(payload)) {
       setModal(null);
-      setNotice(
+      toast.success(
         modal === 'member'
           ? 'Invitation created. Your teammate can accept it in their dashboard.'
           : 'Changes saved.',
@@ -268,7 +295,7 @@ export function Dashboard() {
   async function copy(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setNotice('Copied to clipboard.');
+      toast.success('Copied to clipboard.');
     } catch {
       setError('Clipboard unavailable. Select and copy the value manually.');
     }
@@ -1007,7 +1034,7 @@ export function Dashboard() {
               <table className="w-full text-left">
                 <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
                   <tr>
-                    {['Node', 'Region', 'Status', 'Node ID'].map((h) => (
+                    {['Node', 'Region', 'Status', 'Node ID', 'Actions'].map((h) => (
                       <th key={h} className="p-5 font-medium">
                         {h}
                       </th>
@@ -1023,12 +1050,29 @@ export function Dashboard() {
                           <div>
                             <p className="text-sm">{s.name}</p>
                             <p className="text-xs text-muted-foreground mt-1">{s.host}</p>
+                            {nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete' && (
+                              <p className="mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+                                {nodeJobs.get(s.id)?.status === 'draft'
+                                  ? 'Setup draft'
+                                  : nodeJobs.get(s.id)?.step === 'install'
+                                    ? 'Waiting for the installer…'
+                                    : nodeJobs.get(s.id)?.step}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>
                       <td className="p-5 text-xs text-muted-foreground">{s.region}</td>
                       <td className="p-5">
-                        <Status state={online(s.heartbeatAt) ? 'online' : 'offline'} />
+                        <Status
+                          state={
+                            online(s.heartbeatAt)
+                              ? 'online'
+                              : nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete'
+                                ? nodeJobs.get(s.id)!.status.replaceAll('_', ' ')
+                                : 'offline'
+                          }
+                        />
                       </td>
                       <td className="p-5">
                         <button
@@ -1037,6 +1081,39 @@ export function Dashboard() {
                         >
                           {s.id.slice(0, 8)}…<Clipboard size={13} />
                         </button>
+                      </td>
+                      <td className="p-5">
+                        {admin && nodeJobs.get(s.id) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (nodeJobs.get(s.id)?.operation === 'remove') {
+                                setRemovalNode(s);
+                                return;
+                              }
+                              setInstallationId(nodeJobs.get(s.id)!.id);
+                              setModal('node');
+                            }}
+                          >
+                            {nodeJobs.get(s.id)?.operation === 'remove'
+                              ? 'View removal'
+                              : nodeJobs.get(s.id)?.status === 'complete'
+                                ? 'View setup'
+                                : 'Resume setup'}
+                          </Button>
+                        )}
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="ml-2"
+                            aria-label={`Permanently remove ${s.name}`}
+                            onClick={() => setRemovalNode(s)}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1048,14 +1125,14 @@ export function Dashboard() {
                 <ServerIcon size={30} className="mx-auto text-muted-foreground mb-4" />
                 <p>No nodes yet.</p>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Add a node, copy its ID, and start its media worker.
+                  Choose local installation or use SSH to set up a remote machine.
                 </p>
               </div>
             )}
             <div className="p-5 bg-muted/20 text-xs text-muted-foreground flex items-start gap-2">
               <CircleHelp size={15} className="shrink-0" />
-              Adding a node creates a configuration record. Install the media stack on your Linux
-              host using the repository’s Docker Compose setup.
+              Installation runs in the background. Resume any setup to see its current step and
+              logs. Each Docker host can have one managed node.
             </div>
           </section>
         )}
@@ -1101,8 +1178,34 @@ export function Dashboard() {
           <span>Live status refreshes every 4 seconds</span>
         </footer>
       </main>
+      <NodeRemoval
+        key={removalNode?.id ?? 'none'}
+        node={removalNode}
+        onClose={() => setRemovalNode(null)}
+        onRemoved={() => {
+          setRemovalNode(null);
+          void reload().catch((e) => toast.error(e.message));
+          void installations.refresh();
+        }}
+        onQueued={(id) => {
+          installations.markRemoving(id);
+          void installations.refresh();
+          void reload().catch((e) => toast.error(e.message));
+        }}
+      />
+      <NodeInstaller
+        open={modal === 'node'}
+        onClose={() => {
+          setModal(null);
+          void reload().catch((e) => toast.error(e.message));
+        }}
+        selectedId={installationId}
+        onSelect={setInstallationId}
+        data={installations}
+        onReady={() => setView('Channels')}
+      />
       <Dialog
-        open={!!modal}
+        open={!!modal && modal !== 'node'}
         onOpenChange={(value) => {
           if (!value) {
             setModal(null);
@@ -1165,7 +1268,9 @@ export function Dashboard() {
                       if (await command({ action: 'rotateKey', channelId: channel?.id })) {
                         setModal(null);
                         setCredentials(null);
-                        setNotice('Ingest key rotated. Reopen connection details for the new key.');
+                        toast.success(
+                          'Ingest key rotated. Reopen connection details for the new key.',
+                        );
                       }
                     }}
                   >
@@ -1193,27 +1298,6 @@ export function Dashboard() {
                 </div>
               ) : (
                 <form onSubmit={submit} className="mt-6 space-y-4">
-                  {modal === 'node' && (
-                    <>
-                      <Field title="Node name">
-                        <Input
-                          name="name"
-                          placeholder="US East · Primary"
-                          required
-                          maxLength={80}
-                        />
-                      </Field>
-                      <Field
-                        title="Public hostname or IP"
-                        hint="The address your encoder connects to."
-                      >
-                        <Input name="host" placeholder="stream.example.com" required />
-                      </Field>
-                      <Field title="Region">
-                        <Input name="region" defaultValue="US East" required maxLength={60} />
-                      </Field>
-                    </>
-                  )}
                   {modal === 'channel' && (
                     <>
                       <Field title="Channel name">
@@ -1378,15 +1462,6 @@ export function Dashboard() {
           )}
         </DialogContent>
       </Dialog>
-      {notice && (
-        <div
-          role="status"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl border border-primary/25 bg-card px-5 py-3 shadow-2xl text-sm"
-        >
-          <Check size={16} className="text-primary" />
-          {notice}
-        </div>
-      )}
     </div>
   );
 }
