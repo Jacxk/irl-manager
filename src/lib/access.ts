@@ -1,3 +1,4 @@
+import { developmentAccountAllowed } from './development';
 import { headers } from 'next/headers';
 import { and, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +15,8 @@ export class ApiError extends Error {
 }
 export async function access() {
   const session = await (await getAuth()).api.getSession({ headers: await headers() });
-  if (!session) throw new ApiError(401, 'Please sign in.');
+  if (!session || !developmentAccountAllowed(session.user.id))
+    throw new ApiError(401, 'Please sign in.');
   const person = await db.query.user.findFirst({ where: eq(user.id, session.user.id) });
   if (!person?.active) throw new ApiError(403, 'This account is deactivated.');
   let membership = await db.query.member.findFirst({ where: eq(member.userId, session.user.id) });
@@ -68,7 +70,8 @@ export async function requireChannel(id: string) {
 
 export async function instanceAccess() {
   const session = await (await getAuth()).api.getSession({ headers: await headers() });
-  if (!session) throw new ApiError(401, 'Please sign in.');
+  if (!session || !developmentAccountAllowed(session.user.id))
+    throw new ApiError(401, 'Please sign in.');
   const person = await db.query.user.findFirst({ where: eq(user.id, session.user.id) });
   if (!person?.active || person.instanceRole !== 'admin')
     throw new ApiError(403, 'Instance administrator access required.');

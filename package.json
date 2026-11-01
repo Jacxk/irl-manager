@@ -17,7 +17,9 @@
     "test:media": "tsx tests/media.integration.ts",
     "test:ui": "tsx tests/ui.integration.ts",
     "db:migrate-admin": "tsx scripts/migrate-admin.ts",
-    "installer": "tsx installer/index.ts"
+    "installer": "tsx installer/index.ts",
+    "predev": "NODE_ENV=development tsx scripts/migrate-dev.ts",
+    "db:migrate-dev": "tsx scripts/migrate-dev.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.4.1",

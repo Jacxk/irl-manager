@@ -1,3 +1,4 @@
+import { developmentAccountAllowed } from './development';
 import { betterAuth } from 'better-auth';
 import { APIError } from 'better-auth/api';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -38,7 +39,7 @@ export async function getAuth() {
             const person = await db.query.user.findFirst({
               where: eq(schema.user.id, session.userId),
             });
-            if (!person?.active)
+            if (!person?.active || !developmentAccountAllowed(person.id))
               throw new APIError('FORBIDDEN', { message: 'This account is deactivated.' });
           },
         },

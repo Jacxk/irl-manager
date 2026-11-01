@@ -6,6 +6,8 @@ A multi-user control room for IRL broadcasts, built with Next.js and shadcn/ui c
 
 Includes workspace permissions, team invitations, encrypted destination keys, opt-in program preview, custom text/color fallback scenes, recovery hysteresis, explicit end controls, and disconnect auto-end.
 
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, test login credentials, and pull request instructions.
+
 ## Run the UI and installer in Docker
 
 With `.env` and the database schema initialized, run:
@@ -36,7 +38,7 @@ npm run db:migrate-admin
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000) and create an account. In a second terminal, start the durable installer:
+Open [localhost:3000](http://localhost:3000) and sign in with **admin@example.test** / **test** (development only). The dev startup creates this account automatically; see [CONTRIBUTING.md](CONTRIBUTING.md). In a second terminal, start the durable installer:
 
 ```sh
 npm run installer
