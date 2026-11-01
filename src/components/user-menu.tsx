@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronsUpDown, LogOut, Settings2 } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
@@ -14,6 +14,7 @@ export function UserMenu({ user }: { user: { name: string; email: string } }) {
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const router = useRouter();
+  const view = useSearchParams().get('view');
   useEffect(() => {
     if (!open) return;
     function outside(e: PointerEvent) {
@@ -64,15 +65,17 @@ export function UserMenu({ user }: { user: { name: string; email: string } }) {
               {error}
             </p>
           )}
+          <div className="mb-1 border-b border-border px-3 py-2">
+            <ThemeSelect />
+          </div>
           <Link
-            href="/settings"
+            href={view ? `/settings?${new URLSearchParams({ view })}` : '/settings'}
+            scroll={false}
+            onClick={() => setOpen(false)}
             className="flex items-center gap-2 rounded-lg p-3 text-xs hover:bg-muted focus-visible:outline-primary"
           >
             <Settings2 size={15} /> Settings
           </Link>
-          <div className="border-y border-border p-3">
-            <ThemeSelect />
-          </div>
           <button
             disabled={busy}
             onClick={() => void signOut()}

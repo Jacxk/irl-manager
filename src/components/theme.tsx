@@ -39,30 +39,33 @@ export function ThemeSelect() {
   }
   return (
     <fieldset className="min-w-0 text-xs">
-      <legend className="mb-2 text-muted-foreground">Theme</legend>
-      <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted p-1">
-        {(
-          [
-            { value: 'light', label: 'Light', Icon: Sun },
-            { value: 'system', label: 'System', Icon: Monitor },
-            { value: 'dark', label: 'Dark', Icon: Moon },
-          ] as const
-        ).map(({ value, label, Icon }) => (
-          <label key={value} className="relative cursor-pointer" title={label}>
-            <input
-              type="radio"
-              name={name}
-              value={value}
-              checked={theme === value}
-              onChange={() => change(value)}
-              className="peer sr-only"
-            />
-            <span className="flex h-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground peer-checked:bg-card peer-checked:text-foreground peer-checked:shadow-sm peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary">
-              <Icon size={16} aria-hidden="true" />
-              <span className="sr-only">{label}</span>
-            </span>
-          </label>
-        ))}
+      <legend className="sr-only">Theme</legend>
+      <div className="flex items-center justify-between gap-2">
+        <span aria-hidden="true">Theme</span>
+        <div className="inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-muted p-0.5">
+          {(
+            [
+              { value: 'light', label: 'Light', Icon: Sun },
+              { value: 'system', label: 'System', Icon: Monitor },
+              { value: 'dark', label: 'Dark', Icon: Moon },
+            ] as const
+          ).map(({ value, label, Icon }) => (
+            <label key={value} className="relative cursor-pointer" title={label}>
+              <input
+                type="radio"
+                name={name}
+                value={value}
+                checked={theme === value}
+                onChange={() => change(value)}
+                className="peer sr-only"
+              />
+              <span className="flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground peer-checked:bg-card peer-checked:text-foreground peer-checked:shadow-sm peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary">
+                <Icon size={14} aria-hidden="true" />
+                <span className="sr-only">{label}</span>
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
     </fieldset>
   );

@@ -7,7 +7,13 @@ export const metadata: Metadata = {
   description:
     'A control room for your IRL broadcasts. Multi-protocol ingest, automatic fallback scenes, and simultaneous streaming to multiple providers.',
 };
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+  modal,
+}: {
+  children: React.ReactNode;
+  modal: React.ReactNode;
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -15,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         {children}
+        {modal}
         <Toaster />
       </body>
     </html>
