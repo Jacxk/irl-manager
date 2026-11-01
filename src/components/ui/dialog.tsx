@@ -2,10 +2,17 @@
 import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 export const Dialog = DialogPrimitive.Root;
 export const DialogTitle = DialogPrimitive.Title;
 export const DialogDescription = DialogPrimitive.Description;
-export function DialogContent({ children }: { children: React.ReactNode }) {
+export function DialogContent({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   const returnFocus = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPrimitive.Portal>
@@ -39,7 +46,10 @@ export function DialogContent({ children }: { children: React.ReactNode }) {
             } else if (temporaryTabIndex) main.removeAttribute('tabindex');
           }
         }}
-        className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-7 shadow-2xl"
+        className={cn(
+          'fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-7 shadow-2xl',
+          className,
+        )}
       >
         {children}
         <DialogPrimitive.Close

@@ -1,6 +1,7 @@
 'use client';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 const Defaults = createContext({
+  theme: 'system' as 'light' | 'dark' | 'system',
   language: 'en',
   timezone: 'UTC',
   hour12: false,
@@ -14,6 +15,7 @@ export function InstanceDisplay({
   children,
 }: {
   defaults: {
+    theme: 'light' | 'dark' | 'system';
     language: string;
     timezone: string;
     hour12: boolean;
@@ -23,5 +25,8 @@ export function InstanceDisplay({
   };
   children: React.ReactNode;
 }) {
+  useEffect(() => {
+    window.dispatchEvent(new Event('irl-theme-set'));
+  }, [defaults.theme]);
   return <Defaults.Provider value={defaults}>{children}</Defaults.Provider>;
 }

@@ -1,13 +1,27 @@
 'use client';
 
 import { Toaster as Sonner } from 'sonner';
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback: () => void) {
+  window.addEventListener('irl-theme-change', callback);
+  return () => window.removeEventListener('irl-theme-change', callback);
+}
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ theme = 'system', ...props }: ToasterProps) => {
+  const resolvedTheme = useSyncExternalStore(
+    subscribe,
+    () => {
+      const value = document.documentElement.dataset.theme;
+      return value === 'dark' || value === 'light' ? value : theme;
+    },
+    () => theme,
+  );
   return (
     <Sonner
-      theme={theme as ToasterProps['theme']}
+      theme={resolvedTheme}
       className="toaster group"
       position="top-right"
       duration={4000}
