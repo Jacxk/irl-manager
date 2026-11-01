@@ -83,7 +83,7 @@ const sections: { name: string; icon: LucideIcon; description: string }[] = [
     name: 'Node operations',
     icon: Server,
     description:
-      'Control new local and SSH installations and permanent removal. Local operations also require ENABLE_LOCAL_INSTALL=1 and LOCAL_INSTALL_ADMIN_EMAILS on the server. Remote nodes require HTTPS unless the deployment explicitly permits insecure development control.',
+      'Control new local and SSH installations and permanent removal. Remote nodes require HTTPS unless the deployment explicitly permits insecure development control.',
   },
   { name: 'Users', icon: Users, description: 'Manage accounts, access, and password recovery.' },
   {

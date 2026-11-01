@@ -58,17 +58,7 @@ export function validControlUrl(value: string, mode: string) {
   return url.origin;
 }
 
-export function localInstallAllowed(email: string) {
-  return (
-    process.env.ENABLE_LOCAL_INSTALL === '1' &&
-    (process.env.LOCAL_INSTALL_ADMIN_EMAILS ?? '')
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .includes(email.toLowerCase())
-  );
-}
-
-export async function localNodeInstallationAllowed(email: string) {
+export async function localNodeInstallationAllowed() {
   const { values } = await readSettings();
-  return values.allowLocalNodeInstallation && localInstallAllowed(email);
+  return values.allowLocalNodeInstallation;
 }

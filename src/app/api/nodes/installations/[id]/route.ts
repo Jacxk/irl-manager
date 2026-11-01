@@ -67,11 +67,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         throw new ApiError(403, 'SSH node installation is disabled by instance policy.');
       if (job.operation === 'remove')
         throw new ApiError(409, 'This node is being removed. Use the removal dialog to retry.');
-      if (job.mode === 'local' && !(await localNodeInstallationAllowed(ctx.user.email)))
-        throw new ApiError(
-          403,
-          'Local installation requires an account in LOCAL_INSTALL_ADMIN_EMAILS.',
-        );
+      if (job.mode === 'local' && !(await localNodeInstallationAllowed()))
+        throw new ApiError(403, 'Local installation is disabled in Node operations settings.');
       if (body.action === 'save') {
         if (!['draft', 'awaiting_trust', 'failed'].includes(job.status))
           throw new ApiError(

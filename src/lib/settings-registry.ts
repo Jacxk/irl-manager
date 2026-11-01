@@ -156,7 +156,7 @@ export const settingDefinitions = {
   },
   allowLocalNodeInstallation: {
     section: 'Node operations',
-    label: 'Allow local node installation (also requires server enable flag and account allowlist)',
+    label: 'Allow local node installation',
     env: 'ALLOW_LOCAL_NODE_INSTALLATION',
     default: true,
     schema: z.boolean(),

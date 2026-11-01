@@ -40,7 +40,7 @@ export async function GET() {
         localNodeId: local?.workspaceId === ctx.workspace.id ? local.id : null,
         defaultControlUrl: settings.nodeControlUrl || settings.publicUrl,
         sshEnabled: settings.allowSshNodeInstallation,
-        localEnabled: await localNodeInstallationAllowed(ctx.user.email),
+        localEnabled: await localNodeInstallationAllowed(),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );
@@ -55,11 +55,8 @@ export async function POST(request: Request) {
     const { mode } = await request.json();
     if (!['local', 'ssh'].includes(mode))
       throw new ApiError(400, 'Choose local installation or SSH.');
-    if (mode === 'local' && !(await localNodeInstallationAllowed(ctx.user.email)))
-      throw new ApiError(
-        409,
-        'Local installation is disabled. Set ENABLE_LOCAL_INSTALL=1 and add your account email to LOCAL_INSTALL_ADMIN_EMAILS on the app server.',
-      );
+    if (mode === 'local' && !(await localNodeInstallationAllowed()))
+      throw new ApiError(409, 'Local installation is disabled in Node operations settings.');
     if (!settings.allowPersonalNodes && ctx.user.instanceRole !== 'admin')
       throw new ApiError(403, 'Personal nodes are disabled.');
     if (mode === 'ssh' && !settings.allowSshNodeInstallation)

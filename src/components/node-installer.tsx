@@ -268,8 +268,7 @@ export function NodeInstaller({
             ) : (
               !data.localEnabled && (
                 <p className="px-2 text-xs text-muted-foreground">
-                  Set <code>ENABLE_LOCAL_INSTALL=1</code> on the app and installer to enable local
-                  installation.
+                  Enable local installation in the admin Node operations settings.
                 </p>
               )
             )}
@@ -444,8 +443,7 @@ function InstallationSteps({
         <fieldset disabled={busy || !canEdit} className="space-y-4">
           {!canEdit && (
             <p className="text-xs text-amber-200">
-              Local setup requires an administrator listed in LOCAL_INSTALL_ADMIN_EMAILS on the app
-              server.
+              This installation method is disabled in the admin Node operations settings.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3">

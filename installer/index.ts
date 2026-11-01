@@ -163,8 +163,6 @@ async function run(job: typeof nodeInstallation.$inferSelect) {
     const script = await readFile(path.join(source, 'installer/install.sh'), 'utf8');
     const controlId = createHash('sha256').update(token).digest('hex');
     if (job.mode === 'local') {
-      if (process.env.ENABLE_LOCAL_INSTALL !== '1')
-        throw new Error('Local installation is disabled on this installer.');
       log('Installing on the current Docker host. Existing IRL node identity will be checked.');
       const scriptPath = path.join(spool, 'install.sh');
       await writeFile(scriptPath, script, { mode: 0o700 });

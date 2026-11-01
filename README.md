@@ -46,14 +46,7 @@ In **Nodes → Add node**, choose **Install locally** or **Install on a remote s
 
 ## Install locally
 
-The installer uses the current Docker host. Docker Engine/Desktop and Compose must be available to the installer process. Enable local setup for your trusted account in `.env`, then restart the app and installer:
-
-```dotenv
-ENABLE_LOCAL_INSTALL=1
-LOCAL_INSTALL_ADMIN_EMAILS=you@example.com
-```
-
-The allowlist is separate from workspace roles: public account registration does not grant access to the app server’s Docker host. Only listed workspace administrators can start a local install.
+The installer uses the current Docker host. Docker Engine/Desktop and Compose must be available to the installer process. Instance administrators control local setup in **Admin → Node operations**. Workspace owners and administrators can install when this policy allows it; no environment enable flag or email allowlist is required.
 
 Choose **Install locally**, enter the public hostname/IP that your encoder will use, review the control-panel URL, and press **Install locally**. During development, a `localhost` control URL is mapped to `host.docker.internal` for the containerized agent. The public ingest hostname should be reachable from your encoder.
 
@@ -183,4 +176,4 @@ Shared nodes are available to all workspaces and must first be registered in the
 
 ### Node operations policies
 
-Instance administrators can use `/admin/node-operations` to allow local or SSH installation, control permanent removal, and set the default node control origin for new setups. These settings use the standard saved overrides, environment locks, reset, and audit behavior. Environment keys are `ALLOW_LOCAL_NODE_INSTALLATION`, `ALLOW_SSH_NODE_INSTALLATION`, `ALLOW_NODE_REMOVAL` (boolean `true`/`false`), and `NODE_CONTROL_URL` (blank falls back to the public application URL). Installation policies govern new requests and setup edits; removal policy governs new removal requests. Queued operations continue and existing node connections are unchanged. Local operations still require the deployment's `ENABLE_LOCAL_INSTALL=1` and `LOCAL_INSTALL_ADMIN_EMAILS`; insecure remote HTTP remains a deployment-only development option. The installation wizard enforces personal-node permissions and workspace quotas.
+Instance administrators can use `/admin/node-operations` to allow local or SSH installation, control permanent removal, and set the default node control origin for new setups. These settings use the standard saved overrides, environment locks, reset, and audit behavior. Environment keys are `ALLOW_LOCAL_NODE_INSTALLATION`, `ALLOW_SSH_NODE_INSTALLATION`, `ALLOW_NODE_REMOVAL` (boolean `true`/`false`), and `NODE_CONTROL_URL` (blank falls back to the public application URL). Installation policies govern new requests and setup edits; removal policy governs new removal requests. Queued operations continue and existing node connections are unchanged. Local installation and permanent removal are controlled directly by admin settings; no enable flag or email allowlist is required. Insecure remote HTTP remains a deployment-only development option. The installation wizard enforces personal-node permissions and workspace quotas.
