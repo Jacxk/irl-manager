@@ -2,6 +2,7 @@
 
 import { useId, useSyncExternalStore } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
+import { useDisplayDefaults } from './instance-display';
 
 const key = 'irl-manager-theme';
 const event = 'irl-theme-change';
@@ -14,10 +15,11 @@ function subscribe(callback: () => void) {
 
 export function ThemeSelect() {
   const name = useId();
+  const { theme: defaultTheme } = useDisplayDefaults();
   const theme = useSyncExternalStore(
     subscribe,
-    () => document.documentElement.dataset.themePreference || 'system',
-    () => 'system',
+    () => document.documentElement.dataset.themePreference || defaultTheme,
+    () => defaultTheme,
   );
   function change(value: Theme) {
     try {

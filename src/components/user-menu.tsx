@@ -3,11 +3,15 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ChevronsUpDown, LogOut, Settings2 } from 'lucide-react';
+import { ChevronsUpDown, LogOut, Settings2, ShieldCheck } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
 import { ThemeSelect } from './theme';
 
-export function UserMenu({ user }: { user: { name: string; email: string } }) {
+export function UserMenu({
+  user,
+}: {
+  user: { name: string; email: string; instanceRole?: string };
+}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -76,6 +80,15 @@ export function UserMenu({ user }: { user: { name: string; email: string } }) {
           >
             <Settings2 size={15} /> Settings
           </Link>
+          {user.instanceRole === 'admin' && (
+            <Link
+              href={`/admin?returnTo=${encodeURIComponent(view ? `/?${new URLSearchParams({ view })}` : '/')}`}
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 rounded-lg p-3 text-xs hover:bg-muted focus-visible:outline-primary"
+            >
+              <ShieldCheck size={15} /> Instance administration
+            </Link>
+          )}
           <button
             disabled={busy}
             onClick={() => void signOut()}

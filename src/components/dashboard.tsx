@@ -1,8 +1,19 @@
 'use client';
-import Link from 'next/link';
+import Image from 'next/image';
 import { UserMenu } from './user-menu';
 import { toast } from 'sonner';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useDisplayDefaults } from './instance-display';
+import Link from 'next/link';
 import { NodeInstaller, useNodeInstallations } from './node-installer';
+import { NodeRemoval } from './node-removal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -38,7 +49,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { Switch } from '@/components/ui/switch';
 import { Preview } from './preview';
 import { cn } from '@/lib/utils';
-import type { DashboardData, Destination } from '@/lib/types';
+import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
   'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
@@ -153,6 +164,7 @@ function Field({
   );
 }
 export function Dashboard() {
+  const display = useDisplayDefaults();
   const router = useRouter();
   const [now, setNow] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
@@ -168,6 +180,7 @@ export function Dashboard() {
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [installationId, setInstallationId] = useState<string | null>(null);
+  const [removalNode, setRemovalNode] = useState<Server | null>(null);
   const [credentials, setCredentials] = useState<{
     host: string;
     path: string;
@@ -243,9 +256,14 @@ export function Dashboard() {
     setError('');
     if (
       value === 'node' &&
-      !installations.jobs.some((j) => j.id === installationId && j.status !== 'complete')
+      !installations.jobs.some(
+        (j) => j.id === installationId && j.status !== 'complete' && j.operation !== 'remove',
+      )
     )
-      setInstallationId(installations.jobs.find((j) => j.status !== 'complete')?.id ?? null);
+      setInstallationId(
+        installations.jobs.find((j) => j.status !== 'complete' && j.operation !== 'remove')?.id ??
+          null,
+      );
     setModal(value);
   }
   async function showCredentials() {
@@ -381,10 +399,14 @@ export function Dashboard() {
           href="/"
           className="flex h-[84px] items-center gap-2.5 px-6 text-lg font-semibold tracking-tight"
         >
-          <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <Radio size={20} />
-          </span>
-          irl<span className="-ml-1.5 font-normal text-muted-foreground">manager</span>
+          {display.logoUrl ? (
+            <Image unoptimized src={display.logoUrl} alt="" width={32} height={32} />
+          ) : (
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Radio size={20} />
+            </span>
+          )}
+          <span className="truncate">{display.instanceName}</span>
         </Link>
         <div className="mx-4 mb-7 rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2.5">
@@ -893,7 +915,9 @@ export function Dashboard() {
                             <div>
                               <p className="text-xs leading-relaxed">{e.message}</p>
                               <p className="mt-1 text-[10px] text-muted-foreground">
-                                {new Date(e.createdAt).toLocaleTimeString([], {
+                                {new Date(e.createdAt).toLocaleTimeString(display.language, {
+                                  timeZone: display.timezone,
+                                  hour12: display.hour12,
                                   hour: '2-digit',
                                   minute: '2-digit',
                                 })}
@@ -1004,20 +1028,18 @@ export function Dashboard() {
         {view === 'Nodes' && (
           <section className="surface overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
-                  <tr>
-                    {['Node', 'Region', 'Status', 'Node ID', 'Setup'].map((h) => (
-                      <th key={h} className="p-5 font-medium">
-                        {h}
-                      </th>
+              <Table aria-label="Media nodes">
+                <TableHeader>
+                  <TableRow>
+                    {['Node', 'Region', 'Status', 'Node ID', 'Actions'].map((h) => (
+                      <TableHead key={h}>{h}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {data.servers.map((s) => (
-                    <tr className="border-b border-border last:border-0" key={s.id}>
-                      <td className="p-5">
+                    <TableRow key={s.id}>
+                      <TableCell>
                         <div className="flex items-center gap-3">
                           <ServerIcon size={18} className="text-muted-foreground" />
                           <div>
@@ -1034,9 +1056,9 @@ export function Dashboard() {
                             )}
                           </div>
                         </div>
-                      </td>
-                      <td className="p-5 text-xs text-muted-foreground">{s.region}</td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{s.region}</TableCell>
+                      <TableCell>
                         <Status
                           state={
                             online(s.heartbeatAt)
@@ -1046,35 +1068,52 @@ export function Dashboard() {
                                 : 'offline'
                           }
                         />
-                      </td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell>
                         <button
                           className="font-mono text-xs text-muted-foreground hover:text-primary flex gap-2 items-center"
                           onClick={() => void copy(s.id)}
                         >
                           {s.id.slice(0, 8)}…<Clipboard size={13} />
                         </button>
-                      </td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell>
                         {admin && nodeJobs.get(s.id) && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
+                              if (nodeJobs.get(s.id)?.operation === 'remove') {
+                                setRemovalNode(s);
+                                return;
+                              }
                               setInstallationId(nodeJobs.get(s.id)!.id);
                               setModal('node');
                             }}
                           >
-                            {nodeJobs.get(s.id)?.status === 'complete'
-                              ? 'View setup'
-                              : 'Resume setup'}
+                            {nodeJobs.get(s.id)?.operation === 'remove'
+                              ? 'View removal'
+                              : nodeJobs.get(s.id)?.status === 'complete'
+                                ? 'View setup'
+                                : 'Resume setup'}
                           </Button>
                         )}
-                      </td>
-                    </tr>
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="ml-2"
+                            aria-label={`Permanently remove ${s.name}`}
+                            onClick={() => setRemovalNode(s)}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             {!data.servers.length && (
               <div className="text-center p-14">
@@ -1134,6 +1173,21 @@ export function Dashboard() {
           <span>Live status refreshes every 4 seconds</span>
         </footer>
       </main>
+      <NodeRemoval
+        key={removalNode?.id ?? 'none'}
+        node={removalNode}
+        onClose={() => setRemovalNode(null)}
+        onRemoved={() => {
+          setRemovalNode(null);
+          void reload().catch((e) => toast.error(e.message));
+          void installations.refresh();
+        }}
+        onQueued={(id) => {
+          installations.markRemoving(id);
+          void installations.refresh();
+          void reload().catch((e) => toast.error(e.message));
+        }}
+      />
       <NodeInstaller
         open={modal === 'node'}
         onClose={() => {

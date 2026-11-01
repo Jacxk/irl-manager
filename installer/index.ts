@@ -1,3 +1,4 @@
+import { removeNode } from './remove';
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
@@ -162,8 +163,6 @@ async function run(job: typeof nodeInstallation.$inferSelect) {
     const script = await readFile(path.join(source, 'installer/install.sh'), 'utf8');
     const controlId = createHash('sha256').update(token).digest('hex');
     if (job.mode === 'local') {
-      if (process.env.ENABLE_LOCAL_INSTALL !== '1')
-        throw new Error('Local installation is disabled on this installer.');
       log('Installing on the current Docker host. Existing IRL node identity will be checked.');
       const scriptPath = path.join(spool, 'install.sh');
       await writeFile(scriptPath, script, { mode: 0o700 });
@@ -267,9 +266,14 @@ while (!stopping) {
       .from(nodeInstallation)
       .where(
         or(
-          inArray(nodeInstallation.status, ['queued_check', 'queued_install']),
+          inArray(nodeInstallation.status, [
+            'queued_check',
+            'queued_install',
+            'queued_remove',
+            'remote_removed',
+          ]),
           and(
-            inArray(nodeInstallation.status, ['checking', 'installing']),
+            inArray(nodeInstallation.status, ['checking', 'installing', 'removing']),
             lt(nodeInstallation.updatedAt, new Date(Date.now() - 45000)),
           ),
         ),
@@ -283,12 +287,18 @@ while (!stopping) {
       try {
         if (held.held) {
           try {
-            await run(jobs[0]);
+            const current = await db.query.nodeInstallation.findFirst({
+              where: eq(nodeInstallation.id, jobs[0].id),
+            });
+            if (current) {
+              if (current.operation === 'remove') await removeNode(current, source, root);
+              else await run(current);
+            }
           } catch {
             await db
               .update(nodeInstallation)
               .set({
-                status: 'failed',
+                status: jobs[0].operation === 'remove' ? 'remove_failed' : 'failed',
                 error:
                   'Unable to read installation credentials. Verify ENCRYPTION_KEY is consistent on the app and installer, then retry.',
                 updatedAt: new Date(),

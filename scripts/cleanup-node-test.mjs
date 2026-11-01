@@ -53,11 +53,7 @@ for (const name of ['irl-installer-ssh-target', 'irl-installer-sink']) {
   } catch {}
 }
 let env = readFileSync('.env', 'utf8');
-for (const [key, backup] of [
-  ['ALLOW_INSECURE_NODE_CONTROL', 'previousInsecure'],
-  ['ENABLE_LOCAL_INSTALL', 'previousLocalEnabled'],
-  ['LOCAL_INSTALL_ADMIN_EMAILS', 'previousLocalAdmins'],
-]) {
+for (const [key, backup] of [['ALLOW_INSECURE_NODE_CONTROL', 'previousInsecure']]) {
   if (!(backup in fixture)) continue;
   const pattern = new RegExp('^' + key + '=.*$', 'm');
   const value = fixture[backup];

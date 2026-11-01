@@ -39,6 +39,7 @@ export type Installation = {
   nodeId: string;
   startedAt: string | null;
   mode: 'local' | 'ssh';
+  operation?: string;
   status: string;
   step: string;
   config: InstallConfig;
@@ -52,6 +53,7 @@ type InstallData = {
   localInstalled: boolean;
   localNodeId: string | null;
   localEnabled: boolean;
+  sshEnabled: boolean;
   installerOnline: boolean;
   defaultControlUrl: string;
 };
@@ -61,30 +63,45 @@ export function useNodeInstallations(enabled: boolean) {
     localInstalled: false,
     localNodeId: null,
     localEnabled: false,
+    sshEnabled: false,
     installerOnline: false,
     defaultControlUrl: '',
   });
   const previous = useRef<Map<string, string>>(new Map());
+  const pendingRemovals = useRef(new Set<string>());
   const refresh = useCallback(async () => {
     if (!enabled) return;
     const res = await fetch('/api/nodes/installations', { cache: 'no-store' });
     if (!res.ok) return;
     const next: InstallData = await res.json();
     for (const job of next.jobs) {
+      if (job.operation === 'remove') pendingRemovals.current.add(job.id);
       const prior = previous.current.get(job.id);
       if (prior && prior !== job.status) {
         if (job.status === 'complete')
           toast.success(`${job.config.name} is connected and ready.`, { id: job.id });
-        else if (job.status === 'failed')
-          toast.error(`Node installation needs attention.`, {
-            id: job.id,
-            description: job.error ?? undefined,
-            duration: 8000,
-          });
+        else if (job.status === 'failed' || job.status === 'remove_failed')
+          toast.error(
+            job.operation === 'remove'
+              ? 'Node removal needs attention.'
+              : 'Node installation needs attention.',
+            {
+              id: job.id,
+              description: job.error ?? undefined,
+              duration: 8000,
+            },
+          );
         else if (job.status === 'awaiting_trust')
           toast.info('Verify the SSH host fingerprint to continue.', { id: job.id });
       }
       previous.current.set(job.id, job.status);
+    }
+    for (const id of pendingRemovals.current) {
+      if (!next.jobs.some((job) => job.id === id)) {
+        toast.success('Node permanently removed.', { id });
+        previous.current.delete(id);
+        pendingRemovals.current.delete(id);
+      }
     }
     setData(next);
   }, [enabled]);
@@ -96,7 +113,14 @@ export function useNodeInstallations(enabled: boolean) {
       clearInterval(timer);
     };
   }, [refresh]);
-  return { ...data, refresh };
+  return {
+    ...data,
+    refresh,
+    markRemoving: (id: string) => {
+      previous.current.set(id, 'queued_remove');
+      pendingRemovals.current.add(id);
+    },
+  };
 }
 function Field({
   label,
@@ -190,11 +214,15 @@ export function NodeInstaller({
             work will start when it connects.
           </div>
         )}
-        {job ? (
+        {job?.operation === 'remove' ? (
+          <p className="mt-5 text-sm text-muted-foreground">
+            This node is being removed. Use View removal in the Nodes list to follow progress.
+          </p>
+        ) : job ? (
           <InstallationSteps
             key={job.id}
             job={job}
-            canEdit={job.mode !== 'local' || data.localEnabled}
+            canEdit={job.mode === 'local' ? data.localEnabled : data.sshEnabled}
             refresh={data.refresh}
             saveRef={saveRef}
             onReady={() => {
@@ -240,14 +268,13 @@ export function NodeInstaller({
             ) : (
               !data.localEnabled && (
                 <p className="px-2 text-xs text-muted-foreground">
-                  Set <code>ENABLE_LOCAL_INSTALL=1</code> on the app and installer to enable local
-                  installation.
+                  Enable local installation in the admin Node operations settings.
                 </p>
               )
             )}
             <button
               className="w-full rounded-xl border border-border p-5 text-left hover:border-primary/50 disabled:opacity-40"
-              disabled={busy}
+              disabled={busy || !data.sshEnabled}
               onClick={() => void create('ssh')}
             >
               <span className="flex items-center gap-3 font-medium">
@@ -416,8 +443,7 @@ function InstallationSteps({
         <fieldset disabled={busy || !canEdit} className="space-y-4">
           {!canEdit && (
             <p className="text-xs text-amber-200">
-              Local setup requires an administrator listed in LOCAL_INSTALL_ADMIN_EMAILS on the app
-              server.
+              This installation method is disabled in the admin Node operations settings.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3">

@@ -36,7 +36,7 @@ export type Server = {
 };
 export type DashboardData = {
   invitations: { id: string; workspaceName: string; role: string }[];
-  user: { id: string; name: string; email: string };
+  user: { instanceRole: string; id: string; name: string; email: string };
   workspace: { id: string; name: string };
   role: string;
   channels: Channel[];
