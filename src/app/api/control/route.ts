@@ -134,6 +134,7 @@ export async function POST(request: Request) {
         where: and(eq(mediaServer.id, cmd.serverId), eq(mediaServer.workspaceId, ctx.workspace.id)),
       });
       if (!server) throw new ApiError(404, 'Node not found.');
+      if (server.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
       await db.insert(channel).values({
         id: randomUUID(),
         workspaceId: ctx.workspace.id,
@@ -275,6 +276,7 @@ export async function POST(request: Request) {
         const server = await db.query.mediaServer.findFirst({
           where: eq(mediaServer.id, c.serverId),
         });
+        if (server?.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
         if (!server?.heartbeatAt || Date.now() - server.heartbeatAt.getTime() > 15000)
           throw new ApiError(
             409,

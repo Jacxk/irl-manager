@@ -18,6 +18,7 @@ export async function nodeAuth(request: Request) {
   const node = await db.query.mediaServer.findFirst({ where: eq(mediaServer.id, id) });
   if (!node?.agentTokenHash || !safeEqual(node.agentTokenHash, tokenHash(token)))
     throw new ApiError(401, 'Invalid node credentials.');
+  if (node.removalRequestedAt) throw new ApiError(410, 'This node is being permanently removed.');
   return node;
 }
 export async function installerAccess(request?: Request) {

@@ -78,6 +78,7 @@ export const mediaServer = pgTable('media_server', {
   host: text().notNull(),
   region: text().notNull().default('Local'),
   heartbeatAt: timestamp(),
+  removalRequestedAt: timestamp(),
   agentTokenHash: text(),
   encryptedAgentToken: text(),
   agentInstance: text(),
@@ -155,6 +156,9 @@ export const invitation = pgTable(
 );
 
 export const nodeInstallation = pgTable('node_installation', {
+  operation: text().notNull().default('install'),
+  removalVerifiedAt: timestamp(),
+  remoteRemovedAt: timestamp(),
   startedAt: timestamp(),
   id: text().primaryKey(),
   nodeId: text()

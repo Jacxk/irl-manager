@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { NodeInstaller, useNodeInstallations } from './node-installer';
+import { NodeRemoval } from './node-removal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -39,7 +40,7 @@ import { Switch } from '@/components/ui/switch';
 import { Preview } from './preview';
 import { authClient } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
-import type { DashboardData, Destination } from '@/lib/types';
+import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
   'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
@@ -169,6 +170,7 @@ export function Dashboard() {
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [installationId, setInstallationId] = useState<string | null>(null);
+  const [removalNode, setRemovalNode] = useState<Server | null>(null);
   const [credentials, setCredentials] = useState<{
     host: string;
     path: string;
@@ -244,9 +246,14 @@ export function Dashboard() {
     setError('');
     if (
       value === 'node' &&
-      !installations.jobs.some((j) => j.id === installationId && j.status !== 'complete')
+      !installations.jobs.some(
+        (j) => j.id === installationId && j.status !== 'complete' && j.operation !== 'remove',
+      )
     )
-      setInstallationId(installations.jobs.find((j) => j.status !== 'complete')?.id ?? null);
+      setInstallationId(
+        installations.jobs.find((j) => j.status !== 'complete' && j.operation !== 'remove')?.id ??
+          null,
+      );
     setModal(value);
   }
   async function showCredentials() {
@@ -1027,7 +1034,7 @@ export function Dashboard() {
               <table className="w-full text-left">
                 <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
                   <tr>
-                    {['Node', 'Region', 'Status', 'Node ID', 'Setup'].map((h) => (
+                    {['Node', 'Region', 'Status', 'Node ID', 'Actions'].map((h) => (
                       <th key={h} className="p-5 font-medium">
                         {h}
                       </th>
@@ -1081,13 +1088,30 @@ export function Dashboard() {
                             variant="outline"
                             size="sm"
                             onClick={() => {
+                              if (nodeJobs.get(s.id)?.operation === 'remove') {
+                                setRemovalNode(s);
+                                return;
+                              }
                               setInstallationId(nodeJobs.get(s.id)!.id);
                               setModal('node');
                             }}
                           >
-                            {nodeJobs.get(s.id)?.status === 'complete'
-                              ? 'View setup'
-                              : 'Resume setup'}
+                            {nodeJobs.get(s.id)?.operation === 'remove'
+                              ? 'View removal'
+                              : nodeJobs.get(s.id)?.status === 'complete'
+                                ? 'View setup'
+                                : 'Resume setup'}
+                          </Button>
+                        )}
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="ml-2"
+                            aria-label={`Permanently remove ${s.name}`}
+                            onClick={() => setRemovalNode(s)}
+                          >
+                            <Trash2 size={14} />
                           </Button>
                         )}
                       </td>
@@ -1154,6 +1178,21 @@ export function Dashboard() {
           <span>Live status refreshes every 4 seconds</span>
         </footer>
       </main>
+      <NodeRemoval
+        key={removalNode?.id ?? 'none'}
+        node={removalNode}
+        onClose={() => setRemovalNode(null)}
+        onRemoved={() => {
+          setRemovalNode(null);
+          void reload().catch((e) => toast.error(e.message));
+          void installations.refresh();
+        }}
+        onQueued={(id) => {
+          installations.markRemoving(id);
+          void installations.refresh();
+          void reload().catch((e) => toast.error(e.message));
+        }}
+      />
       <NodeInstaller
         open={modal === 'node'}
         onClose={() => {
