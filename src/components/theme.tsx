@@ -1,6 +1,7 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useId, useSyncExternalStore } from 'react';
+import { Monitor, Moon, Sun } from 'lucide-react';
 
 const key = 'irl-manager-theme';
 const event = 'irl-theme-change';
@@ -12,6 +13,7 @@ function subscribe(callback: () => void) {
 }
 
 export function ThemeSelect() {
+  const name = useId();
   const theme = useSyncExternalStore(
     subscribe,
     () => document.documentElement.dataset.themePreference || 'system',
@@ -21,26 +23,47 @@ export function ThemeSelect() {
     try {
       localStorage.setItem(key, value);
     } catch {
-      document.documentElement.dataset.themePreference = value;
-      document.documentElement.dataset.theme =
+      document.documentElement.setAttribute('data-theme-preference', value);
+      document.documentElement.setAttribute(
+        'data-theme',
         value === 'system'
           ? window.matchMedia('(prefers-color-scheme: dark)').matches
             ? 'dark'
             : 'light'
-          : value;
+          : value,
+      );
       window.dispatchEvent(new Event(event));
       return;
     }
     window.dispatchEvent(new Event('irl-theme-set'));
   }
   return (
-    <label className="block text-xs">
-      <span className="mb-2 block text-muted-foreground">Theme</span>
-      <select value={theme} onChange={(e) => change(e.target.value as Theme)}>
-        <option value="system">System</option>
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-      </select>
-    </label>
+    <fieldset className="min-w-0 text-xs">
+      <legend className="mb-2 text-muted-foreground">Theme</legend>
+      <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted p-1">
+        {(
+          [
+            { value: 'light', label: 'Light', Icon: Sun },
+            { value: 'system', label: 'System', Icon: Monitor },
+            { value: 'dark', label: 'Dark', Icon: Moon },
+          ] as const
+        ).map(({ value, label, Icon }) => (
+          <label key={value} className="relative cursor-pointer" title={label}>
+            <input
+              type="radio"
+              name={name}
+              value={value}
+              checked={theme === value}
+              onChange={() => change(value)}
+              className="peer sr-only"
+            />
+            <span className="flex h-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground peer-checked:bg-card peer-checked:text-foreground peer-checked:shadow-sm peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary">
+              <Icon size={16} aria-hidden="true" />
+              <span className="sr-only">{label}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
