@@ -2,7 +2,6 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { ThemeSelect } from '@/components/theme';
 
 export function SettingsModal({
@@ -69,14 +68,6 @@ export function SettingsModal({
             </div>
           </section>
         </div>
-        <footer className="flex items-center justify-between gap-4 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Appearance is saved automatically in this browser.
-          </p>
-          <Button size="sm" onClick={close}>
-            Done
-          </Button>
-        </footer>
       </DialogContent>
     </Dialog>
   );
