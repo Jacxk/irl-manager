@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { access, ApiError, requireChannel } from '@/lib/access';
@@ -14,6 +14,7 @@ import {
   invitation,
   workspace,
 } from '@/lib/db/schema';
+import { readSettings } from '@/lib/settings';
 import { encrypt } from '@/lib/crypto';
 import { commandSchema } from '@/lib/validation';
 export const dynamic = 'force-dynamic';
@@ -63,7 +64,16 @@ export async function GET() {
     const servers = await db
       .select()
       .from(mediaServer)
-      .where(eq(mediaServer.workspaceId, ctx.workspace.id));
+      .where(
+        or(
+          eq(mediaServer.workspaceId, ctx.workspace.id),
+          and(eq(mediaServer.shared, true), eq(mediaServer.available, true)),
+          inArray(
+            mediaServer.id,
+            channels.map((c) => c.serverId),
+          ),
+        ),
+      );
     const invitations = await db
       .select({ id: invitation.id, workspaceName: workspace.name, role: invitation.role })
       .from(invitation)
@@ -94,9 +104,8 @@ export async function GET() {
 }
 export async function POST(request: Request) {
   try {
-    if (
-      request.headers.get('origin') !== new URL(process.env.BETTER_AUTH_URL ?? request.url).origin
-    )
+    const { values: settings } = await readSettings();
+    if (request.headers.get('origin') !== settings.publicUrl)
       throw new ApiError(403, 'Invalid request origin.');
     const cmd = commandSchema.parse(await request.json());
     const channelContext = 'channelId' in cmd ? await requireChannel(cmd.channelId) : null;
@@ -116,16 +125,33 @@ export async function POST(request: Request) {
     )
       throw new ApiError(403, 'Administrator access required.');
     if (cmd.action === 'createServer') {
-      await db.insert(mediaServer).values({
-        id: randomUUID(),
-        workspaceId: ctx.workspace.id,
-        name: cmd.name,
-        host: cmd.host,
-        region: cmd.region,
+      if (!settings.allowPersonalNodes && ctx.user.instanceRole !== 'admin')
+        throw new ApiError(403, 'Personal nodes are disabled.');
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ctx.workspace.id}))`);
+        const nodes = await tx
+          .select({ id: mediaServer.id })
+          .from(mediaServer)
+          .where(eq(mediaServer.workspaceId, ctx.workspace.id));
+        if (settings.maxNodesPerWorkspace && nodes.length >= settings.maxNodesPerWorkspace)
+          throw new ApiError(409, 'Workspace node limit reached.');
+        await tx.insert(mediaServer).values({
+          id: randomUUID(),
+          workspaceId: ctx.workspace.id,
+          name: cmd.name,
+          host: cmd.host,
+          region: cmd.region,
+        });
       });
     } else if (cmd.action === 'createChannel') {
       const server = await db.query.mediaServer.findFirst({
-        where: and(eq(mediaServer.id, cmd.serverId), eq(mediaServer.workspaceId, ctx.workspace.id)),
+        where: and(
+          eq(mediaServer.id, cmd.serverId),
+          or(
+            eq(mediaServer.workspaceId, ctx.workspace.id),
+            and(eq(mediaServer.shared, true), eq(mediaServer.available, true)),
+          ),
+        ),
       });
       if (!server) throw new ApiError(404, 'Node not found.');
       await db.insert(channel).values({

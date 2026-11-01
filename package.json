@@ -15,10 +15,14 @@
     "format": "prettier --write .",
     "setup": "node scripts/init-env.mjs",
     "test:media": "tsx tests/media.integration.ts",
-    "test:ui": "tsx tests/ui.integration.ts"
+    "test:ui": "tsx tests/ui.integration.ts",
+    "db:migrate-admin": "tsx scripts/migrate-admin.ts"
   },
   "dependencies": {
+    "@radix-ui/react-checkbox": "^1.4.1",
     "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-label": "^2.1.17",
+    "@radix-ui/react-select": "^2.4.1",
     "@radix-ui/react-slot": "latest",
     "@radix-ui/react-switch": "latest",
     "better-auth": "latest",
@@ -32,6 +36,7 @@
     "postgres": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "sonner": "^2.0.8",
     "tailwind-merge": "latest",
     "zod": "latest"
   },

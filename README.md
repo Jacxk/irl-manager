@@ -15,6 +15,7 @@ npm ci
 npm run setup
 docker compose up -d db
 npm run db:push
+npm run db:migrate-admin
 npm run dev
 ```
 
@@ -91,3 +92,15 @@ npx tsx scripts/cleanup-media-fixture.ts
 The API integration suite creates isolated accounts and cleans them up unless fixture retention is enabled. Media tests use a host FFmpeg encoder for RTMP and a containerized encoder for SRT, avoiding Docker Desktop UDP forwarding differences. They use local sink endpoints; they do not broadcast to real platforms. Never use the test sink configuration for public deployment.
 
 See [the implementation plan](docs/PLAN.md) for architecture, current scope, and remaining milestones.
+
+## Instance administration
+
+Run `npm run db:migrate-admin` against the application database before starting this version. The additive migration promotes the sole existing account to instance admin once. New accounts always default to `user`. On a new or multi-account installation, create the intended account and run `ADMIN_BOOTSTRAP_EMAIL=you@example.com npm run db:migrate-admin` when no active admin exists. Workspace roles do not grant instance-admin access.
+
+Open `/admin` from the dashboard's Instance administration link. Configure branding, announcements, UI locale/timezone/theme, access policies, registration, authentication, personal-node policies, and optional shared nodes. Account controls include admin/user roles, deactivation/reactivation, session revocation, and single-use password reset links that expire after 30 minutes. Deliver reset links privately; email delivery is not configured by this release. Deactivation preserves running streams and workspace data.
+
+Set `LOCK_BY_ENVIRONMENT=true` to lock settings with an explicitly supplied environment variable. Otherwise saved overrides take precedence over environment values, then built-in defaults. Remove an override to restore the environment/default. Changes apply on the next request/page load; session lifetime applies to newly issued sessions. Changing the public URL immediately changes authentication and allowed mutation origin. Database credentials, encryption keys, signing secrets, and deployment controls stay outside UI editing.
+
+Shared nodes are available to all workspaces and must first be registered in the admin's own workspace. Disabling availability or stopping sharing prevents new assignments without stopping existing channels. This does not provision infrastructure or configure remote workers. Streaming defaults and encoding remain outside instance administration.
+
+`npm test` includes settings precedence and validation tests. `tests/admin.integration.ts` requires a running app configured with `LOCK_BY_ENVIRONMENT=true` and `BETTER_AUTH_URL` set, plus a **clean disposable** PostgreSQL database with the application schema and a name ending in `_admin_verify`. Set `ADMIN_TEST_DATABASE_URL` to that database and `ADMIN_TEST_URL` to the app URL, then run `npx tsx tests/admin.integration.ts`. Set `ADMIN_TEST_UI=true` to also verify desktop/mobile UI with Playwright. The suite creates test accounts and nodes and leaves them in that disposable database for inspection. Never point the verification app at your normal database.

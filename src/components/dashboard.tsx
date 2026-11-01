@@ -1,4 +1,15 @@
 'use client';
+import Image from 'next/image';
+import { toast } from 'sonner';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useDisplayDefaults } from './instance-display';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -6,7 +17,6 @@ import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
-  Check,
   CircleHelp,
   Clipboard,
   Eye,
@@ -147,6 +157,7 @@ function Field({
   );
 }
 export function Dashboard() {
+  const display = useDisplayDefaults();
   const router = useRouter();
   const [now, setNow] = useState(0);
   const [data, setData] = useState<DashboardData | null>(null);
@@ -161,7 +172,6 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
-  const [notice, setNotice] = useState('');
   const [credentials, setCredentials] = useState<{
     host: string;
     path: string;
@@ -194,11 +204,6 @@ export function Dashboard() {
       clearInterval(timer);
     };
   }, [reload]);
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(''), 4000);
-    return () => clearTimeout(t);
-  }, [notice]);
   const channel = data?.channels.find((c) => c.id === selected) ?? data?.channels[0];
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
@@ -258,7 +263,7 @@ export function Dashboard() {
     if (modal === 'member') payload = { action: 'addMember', ...values };
     if (await command(payload)) {
       setModal(null);
-      setNotice(
+      toast.success(
         modal === 'member'
           ? 'Invitation created. Your teammate can accept it in their dashboard.'
           : 'Changes saved.',
@@ -268,7 +273,7 @@ export function Dashboard() {
   async function copy(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setNotice('Copied to clipboard.');
+      toast.success('Copied to clipboard.');
     } catch {
       setError('Clipboard unavailable. Select and copy the value manually.');
     }
@@ -354,7 +359,7 @@ export function Dashboard() {
       )}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-[#151815] transition-transform lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-card transition-transform lg:translate-x-0',
           mobile ? 'translate-x-0' : '-translate-x-full',
         )}
       >
@@ -362,10 +367,14 @@ export function Dashboard() {
           href="/"
           className="flex h-[84px] items-center gap-2.5 px-6 text-lg font-semibold tracking-tight"
         >
-          <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <Radio size={20} />
-          </span>
-          irl<span className="-ml-1.5 font-normal text-muted-foreground">manager</span>
+          {display.logoUrl ? (
+            <Image unoptimized src={display.logoUrl} alt="" width={32} height={32} />
+          ) : (
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Radio size={20} />
+            </span>
+          )}
+          <span className="truncate">{display.instanceName}</span>
         </Link>
         <div className="mx-4 mb-7 rounded-lg border border-border bg-card p-3">
           <div className="flex items-center gap-2.5">
@@ -418,6 +427,14 @@ export function Dashboard() {
               Manage scenes <ArrowUpRight size={13} />
             </button>
           </div>
+          {data.user.instanceRole === 'admin' && (
+            <Link
+              href={`/admin?returnTo=${encodeURIComponent(view === 'Overview' ? '/' : `/?view=${view.toLowerCase()}`)}`}
+              className="mt-5 block text-sm text-primary"
+            >
+              Instance administration →
+            </Link>
+          )}
           <div className="mt-5 flex items-center gap-2.5 border-t border-border pt-4">
             <span className="grid size-8 place-items-center rounded-full bg-muted text-xs">
               {data.user.name.slice(0, 2).toUpperCase()}
@@ -893,7 +910,9 @@ export function Dashboard() {
                             <div>
                               <p className="text-xs leading-relaxed">{e.message}</p>
                               <p className="mt-1 text-[10px] text-muted-foreground">
-                                {new Date(e.createdAt).toLocaleTimeString([], {
+                                {new Date(e.createdAt).toLocaleTimeString(display.language, {
+                                  timeZone: display.timezone,
+                                  hour12: display.hour12,
                                   hour: '2-digit',
                                   minute: '2-digit',
                                 })}
@@ -1004,20 +1023,18 @@ export function Dashboard() {
         {view === 'Nodes' && (
           <section className="surface overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider">
-                  <tr>
+              <Table aria-label="Media nodes">
+                <TableHeader>
+                  <TableRow>
                     {['Node', 'Region', 'Status', 'Node ID'].map((h) => (
-                      <th key={h} className="p-5 font-medium">
-                        {h}
-                      </th>
+                      <TableHead key={h}>{h}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {data.servers.map((s) => (
-                    <tr className="border-b border-border last:border-0" key={s.id}>
-                      <td className="p-5">
+                    <TableRow key={s.id}>
+                      <TableCell>
                         <div className="flex items-center gap-3">
                           <ServerIcon size={18} className="text-muted-foreground" />
                           <div>
@@ -1025,23 +1042,23 @@ export function Dashboard() {
                             <p className="text-xs text-muted-foreground mt-1">{s.host}</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="p-5 text-xs text-muted-foreground">{s.region}</td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{s.region}</TableCell>
+                      <TableCell>
                         <Status state={online(s.heartbeatAt) ? 'online' : 'offline'} />
-                      </td>
-                      <td className="p-5">
+                      </TableCell>
+                      <TableCell>
                         <button
                           className="font-mono text-xs text-muted-foreground hover:text-primary flex gap-2 items-center"
                           onClick={() => void copy(s.id)}
                         >
                           {s.id.slice(0, 8)}…<Clipboard size={13} />
                         </button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             {!data.servers.length && (
               <div className="text-center p-14">
@@ -1165,7 +1182,9 @@ export function Dashboard() {
                       if (await command({ action: 'rotateKey', channelId: channel?.id })) {
                         setModal(null);
                         setCredentials(null);
-                        setNotice('Ingest key rotated. Reopen connection details for the new key.');
+                        toast.success(
+                          'Ingest key rotated. Reopen connection details for the new key.',
+                        );
                       }
                     }}
                   >
@@ -1378,15 +1397,6 @@ export function Dashboard() {
           )}
         </DialogContent>
       </Dialog>
-      {notice && (
-        <div
-          role="status"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl border border-primary/25 bg-card px-5 py-3 shadow-2xl text-sm"
-        >
-          <Check size={16} className="text-primary" />
-          {notice}
-        </div>
-      )}
     </div>
   );
 }
