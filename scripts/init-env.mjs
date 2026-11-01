@@ -8,9 +8,9 @@ const secret = () => randomBytes(32).toString('hex');
 const password = secret();
 writeFileSync(
   '.env',
-  `DATABASE_URL=postgres://irl:${password}@localhost:5432/irl\nPOSTGRES_PASSWORD=${password}\nBETTER_AUTH_URL=http://localhost:3000\nBETTER_AUTH_SECRET=${secret()}\nENCRYPTION_KEY=${secret()}\nMEDIA_WORKER_TOKEN=${secret()}\nMEDIA_SERVER_ID=\nMEDIA_INTERNAL_HOST=localhost\nMEDIA_HLS_URL=http://localhost:8888\n`,
+  `DATABASE_URL=postgres://irl:${password}@localhost:5432/irl\nPOSTGRES_PASSWORD=${password}\nBETTER_AUTH_URL=http://localhost:3000\nBETTER_AUTH_SECRET=${secret()}\nENCRYPTION_KEY=${secret()}\nMEDIA_WORKER_TOKEN=${secret()}\nMEDIA_SERVER_ID=\nMEDIA_INTERNAL_HOST=localhost\nMEDIA_HLS_URL=http://localhost:8888\nENABLE_LOCAL_INSTALL=1\n`,
   { mode: 0o600, flag: 'wx' },
 );
 console.log(
-  'Created .env with unique local secrets. Add a node in the app, then set MEDIA_SERVER_ID.',
+  'Created .env with unique local secrets. Start the app and installer, then use Nodes → Add node.',
 );

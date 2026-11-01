@@ -1,13 +1,9 @@
 import 'dotenv/config';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
-import { db, sql } from '../src/lib/db';
-import { channel, destination, event, mediaServer } from '../src/lib/db/schema';
-import { decrypt } from '../src/lib/crypto';
 import { nextHealth, retryDelay } from '../src/lib/lifecycle';
-const serverId = process.env.MEDIA_SERVER_ID;
+import { createStore, type ChannelRow, type DestinationRow } from './store';
+const serverId = process.env.NODE_ID ?? process.env.MEDIA_SERVER_ID;
 const token = process.env.MEDIA_WORKER_TOKEN;
 if (!serverId || !token)
   throw new Error('Set MEDIA_SERVER_ID and MEDIA_WORKER_TOKEN before starting the worker.');
@@ -35,10 +31,8 @@ type Program = {
 };
 const programs = new Map<string, Program>();
 let exiting = false;
-async function log(c: typeof channel.$inferSelect, kind: string, message: string) {
-  await db
-    .insert(event)
-    .values({ id: randomUUID(), channelId: c.id, sessionId: c.sessionId, kind, message });
+async function log(c: ChannelRow, kind: string, message: string) {
+  await store.event(c, kind, message);
 }
 function terminate(child?: ChildProcess) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -48,7 +42,7 @@ function terminate(child?: ChildProcess) {
   }, 3000);
   timer.unref();
 }
-function startProgram(c: typeof channel.$inferSelect): Program {
+function startProgram(c: ChannelRow): Program {
   const child = spawn(process.env.PYTHON_BIN ?? 'python3', ['-u', 'worker/program.py'], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -108,7 +102,7 @@ function startProgram(c: typeof channel.$inferSelect): Program {
   });
   return p;
 }
-async function stopProgram(c: typeof channel.$inferSelect, p: Program, reason: string) {
+async function stopProgram(c: ChannelRow, p: Program, reason: string) {
   p.stopping = true;
   for (const relay of p.relays.values()) {
     relay.stopping = true;
@@ -117,22 +111,18 @@ async function stopProgram(c: typeof channel.$inferSelect, p: Program, reason: s
   p.process.stdin?.write(JSON.stringify({ action: 'stop' }) + '\n');
   terminate(p.process);
   programs.delete(c.id);
-  await db.transaction(async (tx) => {
-    await tx
-      .update(destination)
-      .set({ status: 'idle', lastError: null, updatedAt: new Date() })
-      .where(eq(destination.channelId, c.id));
-    await tx
-      .update(channel)
-      .set({
-        desired: 'stopped',
-        state: 'ended',
-        endedAt: new Date(),
-        endReason: reason,
-        manualFallback: false,
-      })
-      .where(and(eq(channel.id, c.id), eq(channel.sessionId, p.sessionId)));
-  });
+  for (const d of lastDestinations.filter((d) => d.channelId === c.id))
+    await store.destination(d, p.sessionId, { status: 'idle', lastError: null });
+  await store.channel(
+    { ...c, sessionId: p.sessionId },
+    {
+      desired: 'stopped',
+      state: 'ended',
+      endedAt: new Date(),
+      endReason: reason,
+      manualFallback: false,
+    },
+  );
   await log(
     c,
     'session',
@@ -143,15 +133,10 @@ async function stopProgram(c: typeof channel.$inferSelect, p: Program, reason: s
         : 'Media pipeline stopped. All outputs disconnected.',
   );
 }
-async function startRelay(
-  c: typeof channel.$inferSelect,
-  p: Program,
-  d: typeof destination.$inferSelect,
-  relay: Relay,
-) {
+async function startRelay(c: ChannelRow, p: Program, d: DestinationRow, relay: Relay) {
   relay.stopping = false;
   relay.connected = false;
-  const output = `${d.url.replace(/\/$/, '')}/${decrypt(d.encryptedKey)}`;
+  const output = `${d.url.replace(/\/$/, '')}/${await store.key(d)}`;
   // Spawn without a shell. Output destinations are independent processes.
   // FFmpeg requires an output URL argument; stderr is discarded to avoid credential exposure.
   const child = spawn(
@@ -184,10 +169,7 @@ async function startRelay(
     { stdio: ['ignore', 'pipe', 'pipe'] },
   );
   relay.process = child;
-  await db
-    .update(destination)
-    .set({ status: 'connecting', lastError: null, updatedAt: new Date() })
-    .where(eq(destination.id, d.id));
+  await store.destination(d, p.sessionId, { status: 'connecting', lastError: null });
   child.stderr!.resume();
   let failed = false;
   const failure = () => {
@@ -197,15 +179,12 @@ async function startRelay(
     if (relay.stopping || p.stopping || exiting) return;
     relay.attempts++;
     relay.nextRetry = Date.now() + retryDelay(relay.attempts - 1);
-    void db
-      .update(destination)
-      .set({
+    void store
+      .destination(d, p.sessionId, {
         status: 'retrying',
         retries: relay.attempts,
         lastError: 'Connection interrupted. Retrying independently.',
-        updatedAt: new Date(),
       })
-      .where(eq(destination.id, d.id))
       .catch(() => {});
   };
   child.on('error', failure);
@@ -213,20 +192,15 @@ async function startRelay(
   createInterface({ input: child.stdout! }).on('line', (line) => {
     if (!relay.connected && /^out_time_us=[1-9]/.test(line) && !relay.stopping && !p.stopping) {
       relay.connected = true;
-      void db
-        .update(destination)
-        .set({ status: 'connected', lastError: null, updatedAt: new Date() })
-        .where(eq(destination.id, d.id))
+      void store
+        .destination(d, p.sessionId, { status: 'connected', lastError: null })
         .catch(() => {});
     }
   });
 }
 async function reconcile() {
-  await db
-    .update(mediaServer)
-    .set({ heartbeatAt: new Date() })
-    .where(eq(mediaServer.id, serverId!));
-  const channels = await db.select().from(channel).where(eq(channel.serverId, serverId!));
+  const { channels, destinations } = await store.load();
+  lastDestinations = destinations;
   for (const c of channels) {
     let p = programs.get(c.id);
     if (p && (c.desired !== 'running' || c.sessionId !== p.sessionId)) {
@@ -235,10 +209,11 @@ async function reconcile() {
     }
     if (c.desired !== 'running') {
       if (c.state === 'ending')
-        await db
-          .update(channel)
-          .set({ state: 'ended', endedAt: new Date() })
-          .where(eq(channel.id, c.id));
+        await store.channel(c, {
+          state: 'ended',
+          endedAt: new Date(),
+          endReason: c.endReason ?? 'intentional',
+        });
       continue;
     }
     if (!p) {
@@ -281,17 +256,8 @@ async function reconcile() {
               : 'Input detected. Waiting for a stable connection.',
       );
     }
-    await db
-      .update(channel)
-      .set({ state, lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null })
-      .where(
-        and(
-          eq(channel.id, c.id),
-          eq(channel.sessionId, p.sessionId),
-          eq(channel.desired, 'running'),
-        ),
-      );
-    const targets = await db.select().from(destination).where(eq(destination.channelId, c.id));
+    await store.channel(c, { state, lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null });
+    const targets = destinations.filter((d) => d.channelId === c.id);
     for (const d of targets) {
       let relay = p.relays.get(d.id);
       if (!d.enabled) {
@@ -299,10 +265,7 @@ async function reconcile() {
           relay.stopping = true;
           terminate(relay.process);
           p.relays.delete(d.id);
-          await db
-            .update(destination)
-            .set({ status: 'idle', updatedAt: new Date() })
-            .where(eq(destination.id, d.id));
+          await store.destination(d, p.sessionId, { status: 'idle' });
         }
         continue;
       }
@@ -314,12 +277,9 @@ async function reconcile() {
     }
   }
 }
-// A dedicated connection holds a server-scoped lock for the worker lifetime.
-const lock = await sql.reserve();
-const [held] = await lock`select pg_try_advisory_lock(hashtext(${serverId})) as locked`;
-if (!held.locked) throw new Error('Another worker already owns this media node.');
-if (!(await db.query.mediaServer.findFirst({ where: eq(mediaServer.id, serverId) })))
-  throw new Error('Add this media node in the dashboard first.');
+const store = await createStore(serverId);
+let lastDestinations: DestinationRow[] = [];
+let lastControl = Date.now();
 console.log('Media worker connected. Reconciling desired session state.');
 async function shutdown() {
   if (exiting) return;
@@ -332,9 +292,7 @@ async function shutdown() {
     }
     terminate(p.process);
   }
-  await db.update(mediaServer).set({ heartbeatAt: null }).where(eq(mediaServer.id, serverId!));
-  lock.release();
-  await sql.end();
+  await store.close();
   process.exit(0);
 }
 process.on('SIGTERM', () => void shutdown());
@@ -342,8 +300,21 @@ process.on('SIGINT', () => void shutdown());
 while (!exiting) {
   try {
     await reconcile();
+    await store.flush();
+    lastControl = Date.now();
   } catch {
-    console.error('Reconciliation failed. Check database and media configuration.');
+    console.error('Control sync failed. Retrying.');
+    if (process.env.CONTROL_URL && Date.now() - lastControl > 30000) {
+      for (const [id, p] of programs) {
+        p.stopping = true;
+        for (const r of p.relays.values()) {
+          r.stopping = true;
+          terminate(r.process);
+        }
+        terminate(p.process);
+        programs.delete(id);
+      }
+    }
   }
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }

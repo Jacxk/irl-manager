@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: irl
       POSTGRES_USER: irl
@@ -14,15 +15,44 @@ services:
       retries: 20
   web:
     build: .
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgres://irl:${POSTGRES_PASSWORD}@db:5432/irl
       MEDIA_HLS_URL: http://media:8888
     ports: ['3000:3000']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
     depends_on:
       db: { condition: service_healthy }
+  installer:
+    build:
+      context: .
+      dockerfile: infra/installer.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://irl:${POSTGRES_PASSWORD}@db:5432/irl
+      INSTALLER_DATA_DIR: /var/lib/irl-installer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - installer:/var/lib/irl-installer
+    depends_on:
+      db: { condition: service_healthy }
+      web: { condition: service_healthy }
   media:
     image: bluenviron/mediamtx:1.15.6
+    profiles: [streaming]
     environment:
       MTX_AUTHHTTPADDRESS: http://web:3000/api/media/auth
     volumes: ['./infra/mediamtx.yml:/mediamtx.yml:ro']
@@ -47,3 +77,4 @@ services:
     depends_on: [media]
 volumes:
   postgres:
+  installer:
