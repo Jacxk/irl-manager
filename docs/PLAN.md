@@ -12,15 +12,15 @@
 
 ## Implemented first release
 
-Next.js App Router, React, TypeScript, Tailwind, shadcn-style Radix components, Better Auth, PostgreSQL, and Drizzle. The authenticated dashboard manages channels, destinations, configurable text/color scenes, manually registered media nodes, and explicit team invitations.
+Next.js App Router, React, TypeScript, Tailwind, shadcn-style Radix components, Better Auth, PostgreSQL, and Drizzle. The authenticated dashboard manages channels, destinations, configurable text/color scenes, local and SSH-installed media nodes, and explicit team invitations.
 
-A separate Node worker reconciles durable PostgreSQL desired state, holds a per-server advisory lock, and supervises a persistent Python/GStreamer program. A single 720p30 H264/AAC encode switches between decoded live input and continuous fallback. Each provider gets an independent FFmpeg relay reading the program. MediaMTX routes ingest, internal media, and HLS preview. Preview is proxied through workspace authorization.
+A separate Node worker reconciles durable desired state and supervises a persistent Python/GStreamer program. A single 720p30 H264/AAC encode switches between decoded live input and continuous fallback. Each provider gets an independent FFmpeg relay reading the program. MediaMTX routes ingest, internal media, and HLS preview. Preview is proxied through workspace authorization.
 
-Docker Compose supplies PostgreSQL, Next.js, MediaMTX, the media worker, and an optional SRTLA receiver. Development uses a host Next.js process and container media services. The first release uses a single deployment trust boundary and one workspace per account.
+Docker Compose supplies the control panel, PostgreSQL, and a persistent installer service. A resumable wizard supports local installation and SSH provisioning with pinned host fingerprints, encrypted temporary credentials, durable logs, and one node per Docker host. Managed agents communicate over authenticated outbound HTTPS without database access. Remote previews use bounded expiring tickets. Sonner handles action and lifecycle notifications. One workspace per account remains the initial model.
 
 ## Follow-on milestones
 
-1. Managed provisioning: cloud-provider adapters, firewall rules, automatic installation, regional placement, capacity reservations, and per-node credentials. Current server registration does not create a cloud VM.
+1. Cloud provisioning: VM-provider adapters, firewall automation, regional placement, capacity reservations, managed upgrades/uninstall, and credential rotation. Local and SSH installation plus per-node credentials are implemented; creating a VM is separate.
 2. Provider OAuth: YouTube broadcast selection and API completion, token refresh, channel metadata, and provider-side status verification. Current destinations use stream keys; YouTube requires auto-stop enabled in Studio.
 3. Media options: image/video uploads, browser scenes, output profiles, hardware encoding, input bitrate/loss/RTT telemetry, audio recovery policies, and compatible low-latency preview.
 4. Reliability: transactional outbox, bounded queues, rolling worker deployment, resource quotas, health metrics, alerts, recording, and cross-node recovery. Website restarts do not own the media processes; media-node restarts do interrupt output.

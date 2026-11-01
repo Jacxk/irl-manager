@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/table';
 import { useDisplayDefaults } from './instance-display';
 import Link from 'next/link';
+import { NodeInstaller, useNodeInstallations } from './node-installer';
+import { NodeRemoval } from './node-removal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -48,7 +50,7 @@ import { Switch } from '@/components/ui/switch';
 import { Preview } from './preview';
 import { authClient } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
-import type { DashboardData, Destination } from '@/lib/types';
+import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
   'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
@@ -91,6 +93,12 @@ function Status({ state }: { state: string }) {
     'retrying',
     'connecting',
     'ending',
+    'installing',
+    'checking',
+    'waiting',
+    'queued check',
+    'queued install',
+    'awaiting trust',
   ].includes(state);
   return (
     <span
@@ -172,6 +180,8 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [installationId, setInstallationId] = useState<string | null>(null);
+  const [removalNode, setRemovalNode] = useState<Server | null>(null);
   const [credentials, setCredentials] = useState<{
     host: string;
     path: string;
@@ -209,6 +219,8 @@ export function Dashboard() {
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
   const admin = data?.role !== 'operator';
+  const installations = useNodeInstallations(!!data && admin);
+  const nodeJobs = new Map(installations.jobs.map((job) => [job.nodeId, job]));
   async function command(payload: Record<string, unknown>) {
     setBusy(true);
     setError('');
@@ -221,9 +233,21 @@ export function Dashboard() {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
       await reload();
+      if (payload.action === 'start')
+        toast.success('Session requested. Connecting enabled destinations.');
+      if (payload.action === 'stop') toast.info('Ending the broadcast on all destinations.');
+      if (payload.action === 'fallback')
+        toast.info(
+          payload.enabled ? 'Fallback scene requested.' : 'Automatic scene switching restored.',
+        );
+      if (payload.action === 'toggleDestination')
+        toast.success(payload.enabled ? 'Destination enabled.' : 'Destination disabled.');
+      if (payload.action === 'deleteDestination') toast.success('Destination removed.');
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      setError(message);
+      toast.error(message);
       return null;
     } finally {
       setBusy(false);
@@ -231,6 +255,16 @@ export function Dashboard() {
   }
   function open(value: Modal) {
     setError('');
+    if (
+      value === 'node' &&
+      !installations.jobs.some(
+        (j) => j.id === installationId && j.status !== 'complete' && j.operation !== 'remove',
+      )
+    )
+      setInstallationId(
+        installations.jobs.find((j) => j.status !== 'complete' && j.operation !== 'remove')?.id ??
+          null,
+      );
     setModal(value);
   }
   async function showCredentials() {
@@ -244,7 +278,6 @@ export function Dashboard() {
     e.preventDefault();
     const values = Object.fromEntries(new FormData(e.currentTarget));
     let payload: Record<string, unknown> = {};
-    if (modal === 'node') payload = { action: 'createServer', ...values };
     if (modal === 'channel') payload = { action: 'createChannel', ...values };
     if (modal === 'destination')
       payload = {
@@ -1026,7 +1059,7 @@ export function Dashboard() {
               <Table aria-label="Media nodes">
                 <TableHeader>
                   <TableRow>
-                    {['Node', 'Region', 'Status', 'Node ID'].map((h) => (
+                    {['Node', 'Region', 'Status', 'Node ID', 'Actions'].map((h) => (
                       <TableHead key={h}>{h}</TableHead>
                     ))}
                   </TableRow>
@@ -1040,12 +1073,29 @@ export function Dashboard() {
                           <div>
                             <p className="text-sm">{s.name}</p>
                             <p className="text-xs text-muted-foreground mt-1">{s.host}</p>
+                            {nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete' && (
+                              <p className="mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+                                {nodeJobs.get(s.id)?.status === 'draft'
+                                  ? 'Setup draft'
+                                  : nodeJobs.get(s.id)?.step === 'install'
+                                    ? 'Waiting for the installer…'
+                                    : nodeJobs.get(s.id)?.step}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{s.region}</TableCell>
                       <TableCell>
-                        <Status state={online(s.heartbeatAt) ? 'online' : 'offline'} />
+                        <Status
+                          state={
+                            online(s.heartbeatAt)
+                              ? 'online'
+                              : nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete'
+                                ? nodeJobs.get(s.id)!.status.replaceAll('_', ' ')
+                                : 'offline'
+                          }
+                        />
                       </TableCell>
                       <TableCell>
                         <button
@@ -1054,6 +1104,39 @@ export function Dashboard() {
                         >
                           {s.id.slice(0, 8)}…<Clipboard size={13} />
                         </button>
+                      </TableCell>
+                      <TableCell>
+                        {admin && nodeJobs.get(s.id) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (nodeJobs.get(s.id)?.operation === 'remove') {
+                                setRemovalNode(s);
+                                return;
+                              }
+                              setInstallationId(nodeJobs.get(s.id)!.id);
+                              setModal('node');
+                            }}
+                          >
+                            {nodeJobs.get(s.id)?.operation === 'remove'
+                              ? 'View removal'
+                              : nodeJobs.get(s.id)?.status === 'complete'
+                                ? 'View setup'
+                                : 'Resume setup'}
+                          </Button>
+                        )}
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="ml-2"
+                            aria-label={`Permanently remove ${s.name}`}
+                            onClick={() => setRemovalNode(s)}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1065,14 +1148,14 @@ export function Dashboard() {
                 <ServerIcon size={30} className="mx-auto text-muted-foreground mb-4" />
                 <p>No nodes yet.</p>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Add a node, copy its ID, and start its media worker.
+                  Choose local installation or use SSH to set up a remote machine.
                 </p>
               </div>
             )}
             <div className="p-5 bg-muted/20 text-xs text-muted-foreground flex items-start gap-2">
               <CircleHelp size={15} className="shrink-0" />
-              Adding a node creates a configuration record. Install the media stack on your Linux
-              host using the repository’s Docker Compose setup.
+              Installation runs in the background. Resume any setup to see its current step and
+              logs. Each Docker host can have one managed node.
             </div>
           </section>
         )}
@@ -1118,8 +1201,34 @@ export function Dashboard() {
           <span>Live status refreshes every 4 seconds</span>
         </footer>
       </main>
+      <NodeRemoval
+        key={removalNode?.id ?? 'none'}
+        node={removalNode}
+        onClose={() => setRemovalNode(null)}
+        onRemoved={() => {
+          setRemovalNode(null);
+          void reload().catch((e) => toast.error(e.message));
+          void installations.refresh();
+        }}
+        onQueued={(id) => {
+          installations.markRemoving(id);
+          void installations.refresh();
+          void reload().catch((e) => toast.error(e.message));
+        }}
+      />
+      <NodeInstaller
+        open={modal === 'node'}
+        onClose={() => {
+          setModal(null);
+          void reload().catch((e) => toast.error(e.message));
+        }}
+        selectedId={installationId}
+        onSelect={setInstallationId}
+        data={installations}
+        onReady={() => setView('Channels')}
+      />
       <Dialog
-        open={!!modal}
+        open={!!modal && modal !== 'node'}
         onOpenChange={(value) => {
           if (!value) {
             setModal(null);
@@ -1212,27 +1321,6 @@ export function Dashboard() {
                 </div>
               ) : (
                 <form onSubmit={submit} className="mt-6 space-y-4">
-                  {modal === 'node' && (
-                    <>
-                      <Field title="Node name">
-                        <Input
-                          name="name"
-                          placeholder="US East · Primary"
-                          required
-                          maxLength={80}
-                        />
-                      </Field>
-                      <Field
-                        title="Public hostname or IP"
-                        hint="The address your encoder connects to."
-                      >
-                        <Input name="host" placeholder="stream.example.com" required />
-                      </Field>
-                      <Field title="Region">
-                        <Input name="region" defaultValue="US East" required maxLength={60} />
-                      </Field>
-                    </>
-                  )}
                   {modal === 'channel' && (
                     <>
                       <Field title="Channel name">

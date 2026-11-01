@@ -1,7 +1,7 @@
+import { Toaster } from '@/components/ui/sonner';
 import type { Metadata } from 'next';
 import { readSettings } from '@/lib/settings';
 import { InstanceDisplay } from '@/components/instance-display';
-import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 export const dynamic = 'force-dynamic';
 export async function generateMetadata(): Promise<Metadata> {

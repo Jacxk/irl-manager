@@ -16,7 +16,8 @@
     "setup": "node scripts/init-env.mjs",
     "test:media": "tsx tests/media.integration.ts",
     "test:ui": "tsx tests/ui.integration.ts",
-    "db:migrate-admin": "tsx scripts/migrate-admin.ts"
+    "db:migrate-admin": "tsx scripts/migrate-admin.ts",
+    "installer": "tsx installer/index.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.4.1",
@@ -37,6 +38,7 @@
     "react": "latest",
     "react-dom": "latest",
     "sonner": "^2.0.8",
+    "ssh2": "^1.17.0",
     "tailwind-merge": "latest",
     "zod": "latest"
   },
@@ -46,6 +48,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/ssh2": "^1.15.6",
     "drizzle-kit": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",

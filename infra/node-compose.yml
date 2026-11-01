@@ -1,0 +1,30 @@
+name: irl-node
+services:
+  media:
+    build:
+      context: ..
+      dockerfile: infra/node-media.Dockerfile
+    restart: unless-stopped
+    environment:
+      MTX_AUTHHTTPADDRESS: http://worker:9000/auth
+    ports: ['1935:1935', '8890:8890/udp']
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ID: ${NODE_ID}
+      NODE_TOKEN: ${NODE_TOKEN}
+      CONTROL_URL: ${CONTROL_URL}
+      MEDIA_WORKER_TOKEN: ${NODE_TOKEN}
+      MEDIA_INTERNAL_HOST: media
+      ALLOW_INSECURE_NODE_CONTROL: ${ALLOW_INSECURE_NODE_CONTROL:-0}
+    extra_hosts: ['host.docker.internal:host-gateway']
+  srtla:
+    build:
+      context: ..
+      dockerfile: infra/srtla.Dockerfile
+    restart: unless-stopped
+    ports: ['5000:5000/udp']
+    depends_on: [media]

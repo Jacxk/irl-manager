@@ -60,6 +60,9 @@ export async function requireChannel(id: string) {
     where: and(eq(channel.id, id), eq(channel.workspaceId, ctx.membership.workspaceId)),
   });
   if (!found) throw new ApiError(404, 'Channel not found.');
+  const { mediaServer } = await import('./db/schema');
+  const node = await db.query.mediaServer.findFirst({ where: eq(mediaServer.id, found.serverId) });
+  if (node?.removalRequestedAt) throw new ApiError(409, 'This node is being permanently removed.');
   return { ...ctx, channel: found };
 }
 
