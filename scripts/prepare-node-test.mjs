@@ -56,17 +56,7 @@ else {
   }
 }
 let env = readFileSync('.env', 'utf8');
-const owner = await (
-  await fetch((process.env.TEST_BASE_URL ?? 'http://localhost:3000') + '/api/control', {
-    headers: { Cookie: fixture.owner.cookie },
-  })
-).json();
-const fields = local
-  ? [
-      ['ENABLE_LOCAL_INSTALL', '1', 'previousLocalEnabled'],
-      ['LOCAL_INSTALL_ADMIN_EMAILS', owner.user.email, 'previousLocalAdmins'],
-    ]
-  : [['ALLOW_INSECURE_NODE_CONTROL', '1', 'previousInsecure']];
+const fields = local ? [] : [['ALLOW_INSECURE_NODE_CONTROL', '1', 'previousInsecure']];
 for (const [key, value, backup] of fields) {
   const regex = new RegExp('^' + key + '=.*$', 'm');
   if (!(backup in fixture))
@@ -79,6 +69,6 @@ writeFileSync('.env', env, { mode: 0o600 });
 writeFileSync(file, JSON.stringify(fixture), { mode: 0o600 });
 console.log(
   local
-    ? 'Local fixture enabled for the temporary account. Restart the installer, then run tests/local-node.integration.ts.'
+    ? 'Local fixture prepared. Enable local installation in Admin → Node operations, then run tests/local-node.integration.ts.'
     : 'SSH fixture ready. Restart the installer so it reads the temporary HTTP-development setting, then run tests/nodes.integration.ts.',
 );

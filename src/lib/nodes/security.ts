@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { mediaServer } from '../db/schema';
+import { readSettings } from '../settings';
 import { ApiError, access } from '../access';
 export function tokenHash(token: string) {
   return createHash('sha256').update(token).digest('hex');
@@ -22,10 +23,8 @@ export async function nodeAuth(request: Request) {
   return node;
 }
 export async function installerAccess(request?: Request) {
-  if (
-    request &&
-    request.headers.get('origin') !== new URL(process.env.BETTER_AUTH_URL ?? request.url).origin
-  )
+  const { values: settings } = await readSettings();
+  if (request && request.headers.get('origin') !== settings.publicUrl)
     throw new ApiError(403, 'Invalid request origin.');
   const ctx = await access();
   if (!['owner', 'admin'].includes(ctx.membership.role))
@@ -59,12 +58,7 @@ export function validControlUrl(value: string, mode: string) {
   return url.origin;
 }
 
-export function localInstallAllowed(email: string) {
-  return (
-    process.env.ENABLE_LOCAL_INSTALL === '1' &&
-    (process.env.LOCAL_INSTALL_ADMIN_EMAILS ?? '')
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .includes(email.toLowerCase())
-  );
+export async function localNodeInstallationAllowed() {
+  const { values } = await readSettings();
+  return values.allowLocalNodeInstallation;
 }

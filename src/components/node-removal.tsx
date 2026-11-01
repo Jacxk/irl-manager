@@ -196,8 +196,7 @@ function RemovalForm({
         </p>
       ) : !plan.canRemove ? (
         <p role="alert" className="text-sm text-destructive">
-          Removing a local installation requires an account in LOCAL_INSTALL_ADMIN_EMAILS and local
-          node operations enabled.
+          Permanent node removal is disabled in the admin Node operations settings.
         </p>
       ) : pending ? (
         <div role="status" className="space-y-2">
