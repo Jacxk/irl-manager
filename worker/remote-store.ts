@@ -86,7 +86,7 @@ export async function remoteStore(nodeId: string): Promise<Store> {
     if (
       previews.has(ticket.id) ||
       previews.size >= 8 ||
-      !/^program_[0-9a-f-]+\/[-a-zA-Z0-9_.]+$/.test(ticket.path)
+      !/^(?:program|input)_[0-9a-f-]+\/[-a-zA-Z0-9_.]+$/.test(ticket.path)
     )
       return;
     previews.add(ticket.id);

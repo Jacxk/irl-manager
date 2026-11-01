@@ -35,6 +35,8 @@ export type Server = {
   heartbeatAt: string | null;
 };
 export type DashboardData = {
+  previewOnByDefault: boolean;
+  allowPreLivePreview: boolean;
   invitations: { id: string; workspaceName: string; role: string }[];
   user: { instanceRole: string; id: string; name: string; email: string };
   workspace: { id: string; name: string };

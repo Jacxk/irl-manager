@@ -47,7 +47,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { Preview } from './preview';
+import { Preview, type PreviewState } from './preview';
 import { cn } from '@/lib/utils';
 import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
@@ -178,7 +178,8 @@ export function Dashboard() {
   const [error, setError] = useState('');
   const [refreshError, setRefreshError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState(false);
+  const [previewOverride, setPreview] = useState<boolean | null>(null);
+  const [previewState, setPreviewState] = useState<PreviewState>('connecting');
   const [mobile, setMobile] = useState(false);
   const [installationId, setInstallationId] = useState<string | null>(null);
   const [removalNode, setRemovalNode] = useState<Server | null>(null);
@@ -219,6 +220,9 @@ export function Dashboard() {
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
+  const preview =
+    (previewOverride ?? data?.previewOnByDefault ?? true) &&
+    (active || data?.allowPreLivePreview !== false);
   const admin = data?.role !== 'operator';
   const installations = useNodeInstallations(!!data && admin);
   const nodeJobs = new Map(installations.jobs.map((job) => [job.nodeId, job]));
@@ -702,7 +706,7 @@ export function Dashboard() {
                       key={c.id}
                       onClick={() => {
                         setSelected(c.id);
-                        setPreview(false);
+                        setPreview(null);
                       }}
                       className={cn(
                         'flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs',
@@ -730,12 +734,17 @@ export function Dashboard() {
                         <Status state={channel.state} />
                       </div>
                       <span className="font-mono text-[10px] text-muted-foreground uppercase">
-                        {channel.protocol} / PROGRAM OUTPUT
+                        {channel.protocol} / {active ? 'PROGRAM OUTPUT' : 'INCOMING STREAM'}
                       </span>
                     </div>
                     <div className="relative aspect-video min-h-[230px] overflow-hidden dot-grid bg-[#0c100d]">
-                      {preview && active ? (
-                        <Preview key={channel.sessionId} channelId={channel.id} />
+                      {preview ? (
+                        <Preview
+                          key={`${channel.id}:${active ? channel.sessionId : 'input'}`}
+                          channelId={channel.id}
+                          source={active ? 'program' : 'input'}
+                          onState={setPreviewState}
+                        />
                       ) : (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8">
                           <div className="relative mb-6 grid size-16 place-items-center rounded-full border border-primary/15 bg-primary/5 text-primary">
@@ -743,18 +752,18 @@ export function Dashboard() {
                             <span className="absolute -inset-4 rounded-full border border-primary/5" />
                           </div>
                           <h3 className="text-2xl font-medium tracking-tight">
-                            {active ? 'Your stream is in motion.' : 'A window to your world.'}
+                            Preview is paused.
                           </h3>
                           <p className="max-w-sm mt-3 text-xs leading-relaxed text-muted-foreground">
                             {active
                               ? 'Turn on the preview to see exactly what your audience sees.'
-                              : 'Start a session to connect your audience. Preview stays off until you need it.'}
+                              : 'Preview your incoming stream before connecting your audience.'}
                           </p>
                           <Button
                             variant="outline"
                             size="sm"
                             className="mt-6"
-                            disabled={!active}
+                            disabled={!active && !data.allowPreLivePreview}
                             onClick={() => setPreview(true)}
                           >
                             <Eye size={14} />
@@ -763,7 +772,11 @@ export function Dashboard() {
                         </div>
                       )}
                       <div className="absolute top-4 left-4 rounded-md border border-white/10 bg-black/40 px-2 py-1 font-mono text-[9px] tracking-widest text-white/60">
-                        {preview && active ? 'PROGRAM PREVIEW' : 'PREVIEW OFF'}
+                        {preview
+                          ? active
+                            ? 'PROGRAM PREVIEW'
+                            : 'INPUT PREVIEW · NOT LIVE'
+                          : 'PREVIEW OFF'}
                       </div>
                       {preview && (
                         <button
@@ -779,11 +792,21 @@ export function Dashboard() {
                       <div className="flex gap-4 text-[11px] text-muted-foreground">
                         <span className="flex items-center gap-1.5">
                           <Signal size={13} />{' '}
-                          {channel.state === 'live'
-                            ? 'Input healthy'
-                            : channel.state === 'fallback'
-                              ? 'Fallback active'
-                              : 'Awaiting live input'}
+                          {!active
+                            ? !preview
+                              ? 'Input preview paused'
+                              : previewState === 'playing'
+                                ? 'Input connected · Not live'
+                                : previewState === 'unsupported'
+                                  ? 'Preview codec unsupported'
+                                  : previewState === 'connecting'
+                                    ? 'Checking incoming video…'
+                                    : 'Waiting for incoming video'
+                            : channel.state === 'live'
+                              ? 'Input healthy'
+                              : channel.state === 'fallback'
+                                ? 'Fallback active'
+                                : 'Awaiting live input'}
                         </span>
                         <span className="hidden sm:flex items-center gap-1.5">
                           <ServerIcon size={13} />
@@ -1296,7 +1319,7 @@ export function Dashboard() {
                     onClick={async () => {
                       if (await command({ action: 'stop', channelId: channel?.id })) {
                         setModal(null);
-                        setPreview(false);
+                        setPreview(null);
                       }
                     }}
                   >

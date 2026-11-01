@@ -10,7 +10,7 @@ rtmp: true
 srt: true
 hls: true
 hlsAlwaysRemux: false
-hlsVariant: mpegts
+hlsVariant: fmp4
 hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 webrtc: false

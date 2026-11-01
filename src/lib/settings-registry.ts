@@ -195,6 +195,20 @@ export const settingDefinitions = {
         }
       }, 'Use an HTTP(S) origin without credentials, path, or trailing slash.'),
   },
+  allowPreLivePreview: {
+    section: 'Policies',
+    label: 'Allow input preview before Go live (applies immediately)',
+    env: 'ALLOW_PRE_LIVE_PREVIEW',
+    default: true,
+    schema: z.boolean(),
+  },
+  previewOnByDefault: {
+    section: 'UI defaults',
+    label: 'Enable preview by default (new dashboard views)',
+    env: 'PREVIEW_ON_BY_DEFAULT',
+    default: true,
+    schema: z.boolean(),
+  },
   language: {
     section: 'UI defaults',
     label: 'Language / locale',

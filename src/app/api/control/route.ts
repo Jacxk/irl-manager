@@ -34,6 +34,7 @@ function fail(error: unknown) {
 export async function GET() {
   try {
     const ctx = await access();
+    const { values: settings } = await readSettings();
     const channels = await db
       .select()
       .from(channel)
@@ -88,6 +89,8 @@ export async function GET() {
       .where(eq(member.workspaceId, ctx.workspace.id));
     return NextResponse.json(
       {
+        previewOnByDefault: settings.previewOnByDefault,
+        allowPreLivePreview: settings.allowPreLivePreview,
         user: ctx.user,
         workspace: ctx.workspace,
         role: ctx.membership.role,

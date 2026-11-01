@@ -1,3 +1,4 @@
+import { readSettings } from '@/lib/settings';
 import { db } from '@/lib/db';
 import { mediaServer } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -13,20 +14,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ path
     )
       return new Response(null, { status: 400 });
     const ctx = await requireChannel(channelId);
+    const source = ctx.channel.desired === 'running' ? 'program' : 'input';
+    const { values: settings } = await readSettings();
+    if (source === 'input' && !settings.allowPreLivePreview)
+      throw new ApiError(403, 'Input preview is disabled by instance policy.');
+    const mediaPath = `${source}_${channelId}/${segments.join('/')}`;
     const node = await db.query.mediaServer.findFirst({
       where: eq(mediaServer.id, ctx.channel.serverId),
     });
-    if (node?.agentTokenHash)
-      return await remotePreview(
-        node.id,
-        `program_${channelId}/${segments.join('/')}`,
-        request.signal,
-      );
+    if (node?.agentTokenHash) return await remotePreview(node.id, mediaPath, request.signal);
     if (ctx.channel.serverId !== process.env.MEDIA_SERVER_ID)
       return new Response('Preview is not configured for this server.', { status: 503 });
-    const url = new URL(
-      `${process.env.MEDIA_HLS_URL ?? 'http://localhost:8888'}/program_${channelId}/${segments.join('/')}`,
-    );
+    const url = new URL(`${process.env.MEDIA_HLS_URL ?? 'http://localhost:8888'}/${mediaPath}`);
     const response = await fetch(url, {
       cache: 'no-store',
       headers: {

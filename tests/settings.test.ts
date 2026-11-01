@@ -70,3 +70,17 @@ test('node policies preserve defaults and respect saved values and deployment lo
     assert.throws(() => resolveSetting('nodeControlUrl', value, {}));
   }
 });
+
+test('preview policies default on, validate booleans, and honor environment locks', () => {
+  for (const key of ['allowPreLivePreview', 'previewOnByDefault'] as const) {
+    assert.equal(resolveSetting(key, undefined, {}).value, true);
+    assert.equal(resolveSetting(key, false, {}).value, false);
+    const env = key === 'allowPreLivePreview' ? 'ALLOW_PRE_LIVE_PREVIEW' : 'PREVIEW_ON_BY_DEFAULT';
+    assert.equal(
+      resolveSetting(key, true, { [env]: 'false', LOCK_BY_ENVIRONMENT: 'true' }).value,
+      false,
+    );
+    assert.throws(() => resolveSetting(key, undefined, { [env]: 'yes' }));
+    assert.throws(() => resolveSetting(key, 'false', {}));
+  }
+});
