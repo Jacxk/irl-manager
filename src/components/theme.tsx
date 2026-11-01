@@ -13,7 +13,7 @@ function subscribe(callback: () => void) {
   return () => window.removeEventListener(event, callback);
 }
 
-export function ThemeSelect() {
+export function ThemeSelect({ showLabel = true }: { showLabel?: boolean }) {
   const name = useId();
   const { theme: defaultTheme } = useDisplayDefaults();
   const theme = useSyncExternalStore(
@@ -43,7 +43,7 @@ export function ThemeSelect() {
     <fieldset className="min-w-0 text-xs">
       <legend className="sr-only">Theme</legend>
       <div className="flex items-center justify-between gap-2">
-        <span aria-hidden="true">Theme</span>
+        {showLabel && <span aria-hidden="true">Theme</span>}
         <div className="inline-flex shrink-0 gap-0.5 rounded-md border border-border bg-muted p-0.5">
           {(
             [
