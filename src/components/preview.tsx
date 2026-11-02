@@ -13,7 +13,7 @@ export function Preview({
   onState,
 }: {
   channelId: string;
-  source: 'input' | 'program';
+  source: 'input' | 'program' | 'preview';
   onState: (state: PreviewState) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -231,12 +231,22 @@ export function Preview({
         autoPlay
         muted
         playsInline
-        aria-label={source === 'input' ? 'Incoming stream preview' : 'Final program preview'}
+        aria-label={
+          source === 'input'
+            ? 'Incoming stream preview'
+            : source === 'preview'
+              ? 'BRB-protected pre-live preview'
+              : 'Final program preview'
+        }
       />
       <div className="pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent p-4 pb-12">
         <span className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-black/50 px-2.5 py-1.5 font-mono text-[9px] tracking-widest text-white/80">
           <Radio size={12} className={state === 'playing' ? 'text-primary' : 'text-white/50'} />
-          {source === 'input' ? 'INPUT PREVIEW · NOT LIVE' : 'PROGRAM PREVIEW'}
+          {source === 'input'
+            ? 'INPUT PREVIEW · NOT LIVE'
+            : source === 'preview'
+              ? 'BRB PREVIEW · NOT BROADCASTING'
+              : 'PROGRAM PREVIEW'}
         </span>
       </div>
       {(state !== 'playing' || playbackError) && (

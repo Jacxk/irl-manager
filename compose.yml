@@ -14,7 +14,10 @@ services:
       timeout: 3s
       retries: 20
   web:
-    build: .
+    build:
+      context: .
+      args:
+        MOBLIN_GATEWAY_URL: ${MOBLIN_GATEWAY_URL:-http://moblin:3001}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -47,6 +50,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - installer:/var/lib/irl-installer
+    depends_on:
+      db: { condition: service_healthy }
+      web: { condition: service_healthy }
+  moblin:
+    build:
+      context: .
+      dockerfile: infra/moblin.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://irl:${POSTGRES_PASSWORD}@db:5432/irl
+    ports: ['${MOBLIN_HOST_BIND:-127.0.0.1}:3001:3001']
     depends_on:
       db: { condition: service_healthy }
       web: { condition: service_healthy }

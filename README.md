@@ -188,4 +188,73 @@ Administrators can disable pre-live input preview in **Admin → Policies** (`AL
 
 The custom preview player provides play/pause, mute and volume, reconnect, and fullscreen. Focus the player for Space/K (play/pause), M (mute), and F (fullscreen); individual controls also support keyboard navigation. Preview audio starts muted. These are local viewing controls and do not change ingest, sessions, or destinations. Existing preview policies/defaults govern access, so no additional instance configuration is needed.
 
-The dashboard checks authenticated relay input availability every three seconds without mounting a player. No incoming video shows an idle state with no video player or playback controls. Input arrival opens preview automatically (when enabled by the viewer/default), departure unmounts it, and a new input opens it again. Ending a broadcast does not hide input that the encoder is still sending; preview follows encoder input independently of broadcasting. A stale or unreachable relay never counts as connected. The status probe reuses the existing private HLS ticket transport and its authorization, quotas, and preview policies; no public ports, schema changes, or new admin controls are needed. Manually pausing playback does not count as a disconnected stream. This local playback behavior uses the existing preview policies/defaults and needs no additional instance setting.
+The dashboard checks authenticated relay input availability every three seconds without mounting a player. Before Go live, no incoming video shows an idle state with no video player or playback controls. During an active broadcast the player stays open on program output, including BRB, even when input disappears. Outside a broadcast, input arrival opens preview automatically (when enabled by the viewer/default), departure unmounts it, and a new input opens it again. Ending a broadcast does not hide input that the encoder is still sending; preview follows encoder input independently of broadcasting. A stale or unreachable relay never counts as connected. The status probe reuses the existing private HLS ticket transport and its authorization, quotas, and preview policies; no public ports, schema changes, or new admin controls are needed. Manually pausing playback does not count as a disconnected stream. This local playback behavior uses the existing preview policies/defaults and needs no additional instance setting.
+
+## Optional Moblin remote control
+
+Ordinary SRT/RTMP streaming and the dashboard work without Moblin pairing. Pairing adds an authenticated native Moblin control connection for one channel. **Video input**, **phone intent**, and **destination broadcasting** are separate:
+
+- Sending video alone opens the incoming preview; it does not start Twitch/YouTube destinations.
+- When you explicitly enable **Let Moblin Go live / Stop start and end all enabled destinations**, the phone’s next Go live starts the channel’s enabled destinations. Stop ends them with an intentional end reason.
+- Pair while Moblin is stopped. Pairing an already-live phone does not start a broadcast. If a start is rejected (no enabled destinations, offline/removing node, revoked access), correct the reported error and stop/start Moblin to retry.
+- Losing SRT or the control connection never sends Stop. During a running session, the continuous program switches to BRB on lost frames, keeps destination connections, and recovers automatically. Preview stays on the **program**, not the missing input. The existing channel disconnect timeout still ends an abandoned session.
+- Stop while completely offline cannot reach the relay immediately. If the last known phone state was streaming, a stopped state on the authenticated reconnect ends the session. If the phone never reconnects, the channel timeout remains the limit.
+- Web **Go live / End stream** controls destinations independently; it does not start/stop the phone encoder. Reconnecting a still-live phone does not restart a manually ended broadcast.
+
+### Deploy the gateway
+
+Apply the additive, repeatable schema migration before deploying the new web/worker images:
+
+```sh
+npm run db:migrate-moblin
+docker compose up -d --build db web installer moblin
+```
+
+The gateway is a separate WebSocket process. The app forwards `/moblin/` HTTP and WebSocket upgrade requests to it through a server-side rewrite, so Moblin uses the normal public application domain and port. The internal upstream defaults to `http://127.0.0.1:3001` outside Docker and `http://moblin:3001` in the Docker build. `MOBLIN_GATEWAY_URL` changes that infrastructure address at build time; it is not a public URL or an admin feature flag. Without Docker, run `npm run moblin` alongside the web app and installer. It uses the same `DATABASE_URL` and `ENCRYPTION_KEY`; `MOBLIN_BIND` defaults to `127.0.0.1` and `MOBLIN_PORT` to `3001`. Docker binds inside the container but publishes port 3001 only on host loopback by default. Existing managed nodes must have their worker image/source updated for bitrate BRB; input-loss BRB already works on older workers. New installations receive the updated bundle.
+
+For a VPS, terminate TLS at your existing reverse proxy and allow WebSocket upgrades on the application’s normal route. The app’s built-in rewrite handles `/moblin/`; a separate public gateway port or location is not required. If you prefer routing directly to the gateway, the following optional location can be used inside the HTTPS Nginx server:
+
+```nginx
+location /moblin/ {
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 1d;
+}
+```
+
+Set **Admin → General → Public application URL** to your real HTTPS app URL. Leave **Admin → Moblin → Public Moblin WebSocket base URL** blank to use that same domain and port automatically (`https://your-app.example` becomes `wss://your-app.example/moblin/<channel>`). Only set a Moblin URL override when the gateway has a separate public address. No LAN address or port 3001 is inferred in generated public URLs. The full per-channel URL is displayed in channel setup. Keep raw port 3001 private in production; a UI setting cannot configure the reverse proxy, certificates or firewall. Public `ws://` addresses are rejected.
+
+For a phone on the same LAN during local testing, explicitly set `MOBLIN_HOST_BIND=0.0.0.0` in the deployment `.env`, recreate the gateway, and configure `ws://YOUR_MACHINE_LAN_IP:3001/moblin` in Admin → Moblin (or `MOBLIN_PUBLIC_URL`). Unencrypted `ws://` is allowed only for loopback/private LAN addresses. `localhost` from a phone means the phone itself. This development binding is infrastructure configuration, not a feature enable flag.
+
+### Pair a channel
+
+1. Add and enable your destinations. Keep YouTube Studio auto-stop enabled as confirmed when adding a YouTube destination.
+2. In the selected channel, click **Set up Moblin**. Enable pairing, optionally enable destination start/stop control, review BRB thresholds, and **Save changes**.
+3. Copy the generated pairing password before closing. It is shown only then; **Replace pairing password** revokes the old password. The pairing password and ingest key are different credentials.
+4. In Moblin open **Settings → Remote control**, set that password, enable **Streamer**, and paste the channel’s connection URL. Use the same channel’s ingest URL for video. This integration does not provide chat/events forwarding; leave Moblin’s remote chat/event forwarding off.
+5. Wait for **Phone connected**, then test Moblin Go live, a short network outage, reconnection, and Stop. The channel shows reported upload bitrate and any rejected start/stop action.
+
+Only workspace owners/admins can pair, configure, or rotate a password. Workspace operators can view status and keep their existing dashboard broadcast controls. Pairing is bound to its creator’s current workspace administration rights: deactivation, removal or loss of that role revokes the device on its next message/heartbeat. No phone can select another channel through its payload. Passwords are encrypted at rest, excluded from GET responses and logs, and authenticated using Moblin’s salted challenge-response protocol. Only one current phone connection can own a channel. Saving settings or rotating a password invalidates the old control lease without ending the broadcast. If another administrator takes over an existing pairing, saving generates a new password so the previous creator’s known credential is revoked.
+
+### Low bitrate BRB and administration
+
+With pairing enabled, numeric Moblin upload telemetry can trigger BRB before frames disappear. Defaults are **500 kbps**, **5 seconds** below the threshold, and **5 seconds** of recovery at least **20% above** the threshold. Configure these per channel; threshold **0** disables bitrate-based BRB. Brief dips do not switch scenes. Old telemetry expires after 15 seconds; missing video is still handled by normal input-loss protection. Manual fallback remains available and the disconnect timeout still applies.
+
+**Admin → Moblin** uses the existing settings API, validation, audit, environment locks, reset overrides and staged Save/Cancel:
+
+- `ALLOW_MOBLIN_CONTROL` permits pairing (default true; each channel remains unpaired/disabled until explicitly configured). Disabling it rejects new operations and revokes existing control connections within a heartbeat; ongoing broadcasts are not ended.
+- `MAX_MOBLIN_CONNECTIONS` limits new simultaneous authenticated phone connections (default 100). Lowering it does not drop existing connections.
+- `MOBLIN_PUBLIC_URL` supplies the connection base URL. Changing it updates setup instructions; phones must be updated if the public route changes.
+- `MOBLIN_DEFAULT_LOW_BITRATE_KBPS`, `MOBLIN_DEFAULT_LOW_BITRATE_SECONDS`, and `MOBLIN_DEFAULT_RECOVERY_SECONDS` affect newly created pairings only. Existing channel configuration is preserved.
+
+Gateway readiness is visible in channel setup and instance Administration. Deployment secrets and TLS/network prerequisites stay outside editable UI settings. Disabling channel pairing leaves manual broadcasts and ingest usable.
+
+Protocol references: [Moblin native remote control](https://github.com/eerimoq/moblin/tree/main/Moblin/RemoteControl) and [Moblin start/stop intent](https://github.com/eerimoq/moblin/blob/main/Moblin/Various/Model/ModelStream.swift). Protocol regression tests use a simulated Moblin client; a real phone still needs the one-time pairing above.
+
+Production builds disable Turbopack’s on-disk build cache, which is discarded by the Docker runtime image. Development caching remains enabled.
+
+Moblin also starts a BRB-protected pre-live preview when the paired phone reports that it is streaming. This does not start destinations, even with destination control off. Input or remote-control loss keeps that preview open through the channel's reconnect window, with BRB on missing frames or sustained low bitrate. An explicit phone Stop closes it; a reconnect after an offline Stop closes it when the phone reports its state. An unpaired raw-input preview cannot distinguish Stop from a network outage.
+
+Admin → Moblin limits protected pre-live programs per node (default 2; 0 disables them). The limit and the existing pre-live preview policy apply immediately to existing requests as well as new ones. Pairing ownership, active account, and workspace administrator permissions are checked before allocating a preview. Queued requests start when capacity becomes available. Run `npm run db:migrate-moblin` to apply both Moblin migrations before updating the web, gateway, and node workers. This reuses authenticated node media transport and needs no additional public port or secret.

@@ -19,7 +19,9 @@
     "db:migrate-admin": "tsx scripts/migrate-admin.ts",
     "installer": "tsx installer/index.ts",
     "predev": "NODE_ENV=development tsx scripts/migrate-dev.ts",
-    "db:migrate-dev": "tsx scripts/migrate-dev.ts"
+    "db:migrate-dev": "tsx scripts/migrate-dev.ts",
+    "moblin": "tsx moblin/index.ts",
+    "db:migrate-moblin": "tsx scripts/migrate-moblin.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.4.1",
@@ -43,6 +45,7 @@
     "sonner": "^2.0.8",
     "ssh2": "^1.17.0",
     "tailwind-merge": "latest",
+    "ws": "^8.22.1",
     "zod": "latest"
   },
   "devDependencies": {
@@ -52,6 +55,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",

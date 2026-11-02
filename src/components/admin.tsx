@@ -85,6 +85,12 @@ const sections: { name: string; icon: LucideIcon; description: string }[] = [
     description:
       'Control new local and SSH installations and permanent removal. Remote nodes require HTTPS unless the deployment explicitly permits insecure development control.',
   },
+  {
+    name: 'Moblin',
+    icon: Radio,
+    description:
+      'Optional phone pairing and low bitrate BRB defaults. Production requires a WSS reverse proxy to the Moblin gateway on port 3001. Do not expose passwords or change TLS requirements here.',
+  },
   { name: 'Users', icon: Users, description: 'Manage accounts, access, and password recovery.' },
   {
     name: 'Shared nodes',

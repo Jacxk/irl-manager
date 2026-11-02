@@ -195,6 +195,78 @@ export const settingDefinitions = {
         }
       }, 'Use an HTTP(S) origin without credentials, path, or trailing slash.'),
   },
+  allowMoblinControl: {
+    section: 'Moblin',
+    label: 'Allow optional Moblin pairing (applies to new and existing connections)',
+    env: 'ALLOW_MOBLIN_CONTROL',
+    default: true,
+    schema: z.boolean(),
+  },
+  maxMoblinPreviewPrograms: {
+    section: 'Moblin',
+    label: 'BRB-protected pre-live previews per node (0 disables; applies immediately)',
+    env: 'MAX_MOBLIN_PREVIEW_PROGRAMS',
+    default: 2,
+    schema: z.number().int().min(0).max(16),
+  },
+  maxMoblinConnections: {
+    section: 'Moblin',
+    label: 'Maximum simultaneous paired phones (new connections)',
+    env: 'MAX_MOBLIN_CONNECTIONS',
+    default: 100,
+    schema: z.number().int().min(1).max(10000),
+  },
+  moblinPublicUrl: {
+    section: 'Moblin',
+    label: 'Public Moblin WebSocket base URL (blank derives from app URL)',
+    env: 'MOBLIN_PUBLIC_URL',
+    default: '',
+    schema: z
+      .string()
+      .trim()
+      .max(500)
+      .refine((v) => {
+        if (!v) return true;
+        try {
+          const u = new URL(v);
+          const local =
+            /^(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(
+              u.hostname,
+            );
+          return (
+            (u.protocol === 'wss:' || (u.protocol === 'ws:' && local)) &&
+            !u.username &&
+            !u.password &&
+            !u.search &&
+            !u.hash &&
+            u.pathname === '/moblin'
+          );
+        } catch {
+          return false;
+        }
+      }, 'Use wss://host/moblin; ws://private-IP:3001/moblin is supported for local testing.'),
+  },
+  moblinDefaultLowBitrateKbps: {
+    section: 'Moblin',
+    label: 'Default BRB bitrate threshold in kbps (new pairings; 0 disables)',
+    env: 'MOBLIN_DEFAULT_LOW_BITRATE_KBPS',
+    default: 500,
+    schema: z.number().int().min(0).max(100000),
+  },
+  moblinDefaultLowBitrateSeconds: {
+    section: 'Moblin',
+    label: 'Default low bitrate delay in seconds (new pairings)',
+    env: 'MOBLIN_DEFAULT_LOW_BITRATE_SECONDS',
+    default: 5,
+    schema: z.number().int().min(2).max(60),
+  },
+  moblinDefaultRecoverySeconds: {
+    section: 'Moblin',
+    label: 'Default stable bitrate recovery in seconds (new pairings)',
+    env: 'MOBLIN_DEFAULT_RECOVERY_SECONDS',
+    default: 5,
+    schema: z.number().int().min(2).max(60),
+  },
   allowPreLivePreview: {
     section: 'Policies',
     label: 'Allow input preview before Go live (applies immediately)',

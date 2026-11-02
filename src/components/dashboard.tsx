@@ -1,4 +1,5 @@
 'use client';
+import { MoblinControl } from './moblin-control';
 import Image from 'next/image';
 import { UserMenu } from './user-menu';
 import { toast } from 'sonner';
@@ -230,7 +231,8 @@ export function Dashboard() {
   const previewAllowed = active || data?.allowPreLivePreview !== false;
   const inputConnected =
     inputStatus?.channelId === previewChannelId && inputStatus?.connected === true;
-  const preview = previewWanted && inputConnected;
+  const protectedPreview = !active && !!channel?.previewSessionId;
+  const preview = previewWanted && (active || protectedPreview || inputConnected);
   useEffect(() => {
     if (!previewChannelId || !previewAllowed) return;
     const controller = new AbortController();
@@ -775,9 +777,9 @@ export function Dashboard() {
                     <div className="relative aspect-video min-h-[230px] overflow-hidden dot-grid bg-[#0c100d]">
                       {preview ? (
                         <Preview
-                          key={`${channel.id}:${active ? channel.sessionId : 'input'}`}
+                          key={`${channel.id}:${active ? channel.sessionId : protectedPreview ? channel.previewSessionId : 'input'}`}
                           channelId={channel.id}
-                          source={active ? 'program' : 'input'}
+                          source={active ? 'program' : protectedPreview ? 'preview' : 'input'}
                           onState={setPreviewState}
                         />
                       ) : (
@@ -789,23 +791,25 @@ export function Dashboard() {
                           <h3 className="text-2xl font-medium tracking-tight">
                             {!previewAllowed
                               ? 'Preview unavailable'
-                              : inputConnected
+                              : inputConnected || active || protectedPreview
                                 ? 'Preview is paused.'
                                 : 'No incoming stream'}
                           </h3>
                           <p className="max-w-sm mt-3 text-xs leading-relaxed text-muted-foreground">
                             {!previewAllowed
                               ? 'Input preview is disabled by instance policy.'
-                              : !inputConnected
+                              : !inputConnected && !active && !protectedPreview
                                 ? 'Start streaming from your encoder. Preview opens automatically when video arrives.'
                                 : 'Turn on preview to watch the incoming stream.'}
                           </p>
-                          {inputConnected && previewAllowed && (
+                          {(active || protectedPreview || inputConnected) && previewAllowed && (
                             <Button
                               variant="outline"
                               size="sm"
                               className="mt-6"
-                              disabled={!previewAllowed || !inputConnected}
+                              disabled={
+                                !previewAllowed || (!active && !protectedPreview && !inputConnected)
+                              }
                               onClick={() => setPreview(true)}
                             >
                               <Eye size={14} />
@@ -833,29 +837,35 @@ export function Dashboard() {
                       <div className="flex gap-4 text-[11px] text-muted-foreground">
                         <span className="flex items-center gap-1.5">
                           <Signal size={13} />{' '}
-                          {!inputConnected
+                          {!inputConnected && !active && !protectedPreview
                             ? 'No incoming stream'
-                            : !active
-                              ? !preview
-                                ? !inputConnected
-                                  ? 'No incoming stream'
-                                  : 'Input preview paused'
-                                : previewState === 'playing'
-                                  ? 'Input connected · Not live'
-                                  : previewState === 'unsupported'
-                                    ? 'Preview codec unsupported'
-                                    : previewState === 'offline'
-                                      ? 'Stream ended'
-                                      : previewState === 'paused'
-                                        ? 'Preview playback paused'
-                                        : previewState === 'connecting'
-                                          ? 'Checking incoming video…'
-                                          : 'Waiting for incoming video'
-                              : channel.state === 'live'
-                                ? 'Input healthy'
-                                : channel.state === 'fallback'
-                                  ? 'Fallback active'
-                                  : 'Awaiting live input'}
+                            : protectedPreview
+                              ? channel.previewState === 'fallback'
+                                ? 'BRB preview · Waiting for input'
+                                : channel.previewState === 'live'
+                                  ? 'Input connected · Not broadcasting'
+                                  : 'Protected preview starting…'
+                              : !active
+                                ? !preview
+                                  ? !inputConnected
+                                    ? 'No incoming stream'
+                                    : 'Input preview paused'
+                                  : previewState === 'playing'
+                                    ? 'Input connected · Not live'
+                                    : previewState === 'unsupported'
+                                      ? 'Preview codec unsupported'
+                                      : previewState === 'offline'
+                                        ? 'Stream ended'
+                                        : previewState === 'paused'
+                                          ? 'Preview playback paused'
+                                          : previewState === 'connecting'
+                                            ? 'Checking incoming video…'
+                                            : 'Waiting for incoming video'
+                                : channel.state === 'live'
+                                  ? 'Input healthy'
+                                  : channel.state === 'fallback'
+                                    ? 'Fallback active'
+                                    : 'Awaiting live input'}
                         </span>
                         <span className="hidden sm:flex items-center gap-1.5">
                           <ServerIcon size={13} />
@@ -892,6 +902,15 @@ export function Dashboard() {
                           {active ? 'End stream' : 'Go live'}
                         </Button>
                       </div>
+                    </div>
+                    <div className="border-t border-border p-4">
+                      <MoblinControl
+                        key={channel.id}
+                        channelId={channel.id}
+                        canEdit={admin}
+                        broadcastActive={active}
+                        protectedPreview={protectedPreview}
+                      />
                     </div>
                   </section>
                   <section className="surface p-5 flex flex-col">

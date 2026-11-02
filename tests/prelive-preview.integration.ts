@@ -170,6 +170,7 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   let inputAvailable = false;
+  let programAvailable = false;
   await page.route('**/api/preview/**', (route) => {
     if (new URL(route.request().url()).pathname.endsWith('/status.json'))
       return route.fulfill({
@@ -177,7 +178,8 @@ try {
         contentType: 'application/json',
         body: JSON.stringify({ connected: inputAvailable }),
       });
-    if (!inputAvailable) return route.fulfill({ status: 404, body: 'No incoming stream' });
+    if (!inputAvailable && !programAvailable)
+      return route.fulfill({ status: 404, body: 'No incoming stream' });
     const name = basename(new URL(route.request().url()).pathname);
     return route.fulfill({
       status: 200,
@@ -246,9 +248,39 @@ try {
   await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  const protectedSession = randomUUID();
+  await sql`insert into moblin_pairing("channelId","workspaceId","pairedBy","encryptedPassword",enabled,"lastStreaming","previewSessionId","previewStartedAt","previewState") values(${channelId},${workspaceId},${userId},'isolated-unused-password',true,true,${protectedSession},now(),'fallback')`;
+  assert.equal((await fetch(url, { headers })).status, 200);
+  assert.equal(paths.at(-1), `/preview_${channelId}/index.m3u8`);
+  programAvailable = true;
+  inputAvailable = false;
+  await page.getByText('BRB PREVIEW · NOT BROADCASTING', { exact: true }).waitFor();
+  await expect(page.getByLabel('BRB-protected pre-live preview')).toBeVisible();
+  await page.getByText('BRB preview · Waiting for input', { exact: true }).waitFor();
+  await delay(3500);
+  await expect(page.getByLabel('BRB-protected pre-live preview')).toBeVisible();
+  assert.equal(
+    (await sql`select desired from channel where id=${channelId}`)[0].desired,
+    'stopped',
+  );
+  await sql`update moblin_pairing set "lastStreaming"=false,"previewSessionId"=null where "channelId"=${channelId}`;
+  programAvailable = false;
+  await page.getByRole('heading', { name: 'No incoming stream', exact: true }).waitFor();
+  inputAvailable = true;
   await sql`update channel set desired='running',state='live',"sessionId"=${randomUUID()} where id=${channelId}`;
+  programAvailable = true;
+  inputAvailable = false;
+  await sql`update channel set state='fallback' where id=${channelId}`;
+  await page.getByText('PROGRAM PREVIEW', { exact: true }).waitFor();
+  await page.getByText('Fallback active', { exact: true }).waitFor();
+  await expect(page.getByLabel('Final program preview')).toBeVisible();
+  // Input loss during a live session must not unmount the BRB program preview.
+  await delay(3500);
+  await expect(page.getByLabel('Final program preview')).toBeVisible();
+  inputAvailable = true;
   await page.getByRole('button', { name: 'End stream', exact: true }).click();
   await page.getByRole('button', { name: 'End all destinations', exact: true }).click();
+  programAvailable = false;
   await page.getByText('INPUT PREVIEW · NOT LIVE', { exact: true }).waitFor();
   inputAvailable = false;
   await page.getByRole('heading', { name: 'No incoming stream', exact: true }).waitFor();

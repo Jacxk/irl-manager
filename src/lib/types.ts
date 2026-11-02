@@ -1,4 +1,7 @@
 export type Channel = {
+  previewSessionId?: string | null;
+  previewState?: string;
+  previewQueued?: boolean;
   id: string;
   serverId: string;
   name: string;

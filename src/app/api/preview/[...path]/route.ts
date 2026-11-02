@@ -1,3 +1,4 @@
+import { moblinPreviews } from '@/lib/moblin/previews';
 import { readSettings } from '@/lib/settings';
 import { db } from '@/lib/db';
 import { mediaServer } from '@/lib/db/schema';
@@ -15,9 +16,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ path
       return new Response(null, { status: 400 });
     const ctx = await requireChannel(channelId);
     const statusRequest = segments.length === 1 && segments[0] === 'status.json';
-    const source = statusRequest || ctx.channel.desired !== 'running' ? 'input' : 'program';
     const { values: settings } = await readSettings();
-    if (source === 'input' && !settings.allowPreLivePreview && ctx.channel.desired !== 'running')
+    const protectedPreviews =
+      !statusRequest && ctx.channel.desired !== 'running'
+        ? await moblinPreviews([ctx.channel.serverId], settings)
+        : null;
+    const source = statusRequest
+      ? 'input'
+      : ctx.channel.desired === 'running'
+        ? 'program'
+        : protectedPreviews?.selected.has(channelId)
+          ? 'preview'
+          : 'input';
+    if (
+      (source === 'input' || source === 'preview') &&
+      !settings.allowPreLivePreview &&
+      ctx.channel.desired !== 'running'
+    )
       throw new ApiError(403, 'Input preview is disabled by instance policy.');
     const mediaPath = `${source}_${channelId}/${statusRequest ? 'index.m3u8' : segments.join('/')}`;
     async function status(response: Response) {

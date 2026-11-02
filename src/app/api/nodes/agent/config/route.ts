@@ -1,7 +1,10 @@
+import { moblinPreviews } from '@/lib/moblin/previews';
+import { moblinFallbackActive } from '@/lib/moblin/protocol';
+import { readSettings } from '@/lib/settings';
 import { and, eq, inArray, lt, or, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { channel, destination, mediaServer, nodePreview } from '@/lib/db/schema';
+import { channel, destination, mediaServer, nodePreview, moblinPairing } from '@/lib/db/schema';
 import { decrypt } from '@/lib/crypto';
 import { nodeAuth, apiFailure } from '@/lib/nodes/security';
 import { ApiError } from '@/lib/access';
@@ -31,6 +34,20 @@ export async function GET(request: Request) {
       .returning({ id: mediaServer.id });
     if (!claimed.length) throw new ApiError(409, 'Another agent is active for this node.');
     const channels = await db.select().from(channel).where(eq(channel.serverId, node.id));
+    const { values: settings } = await readSettings();
+    const pairings =
+      channels.length && settings.allowMoblinControl
+        ? await db
+            .select()
+            .from(moblinPairing)
+            .where(
+              inArray(
+                moblinPairing.channelId,
+                channels.map((c) => c.id),
+              ),
+            )
+        : [];
+    const protectedPreviews = await moblinPreviews([node.id], settings);
     const targets = channels.length
       ? await db
           .select()
@@ -51,7 +68,13 @@ export async function GET(request: Request) {
       .where(and(eq(nodePreview.nodeId, node.id), isNull(nodePreview.status)));
     return Response.json(
       {
-        channels,
+        channels: channels.map((c) => ({
+          ...c,
+          previewSessionId: protectedPreviews.selected.get(c.id)?.sessionId ?? null,
+          previewStartedAt: protectedPreviews.selected.get(c.id)?.startedAt ?? null,
+          previewLastFrameAt: protectedPreviews.selected.get(c.id)?.lastFrameAt ?? null,
+          automaticFallback: pairings.some((p) => p.channelId === c.id && moblinFallbackActive(p)),
+        })),
         destinations: targets.map(({ encryptedKey, ...d }) => ({
           ...d,
           streamKey: decrypt(encryptedKey),

@@ -86,7 +86,7 @@ export async function remoteStore(nodeId: string): Promise<Store> {
     if (
       previews.has(ticket.id) ||
       previews.size >= 8 ||
-      !/^(?:program|input)_[0-9a-f-]+\/[-a-zA-Z0-9_.]+$/.test(ticket.path)
+      !/^(?:program|input|preview)_[0-9a-f-]+\/[-a-zA-Z0-9_.]+$/.test(ticket.path)
     )
       return;
     previews.add(ticket.id);
@@ -142,11 +142,23 @@ export async function remoteStore(nodeId: string): Promise<Store> {
       const data = await response.json();
       channels = data.channels.map((c: ChannelRow) => ({
         ...c,
+        previewStartedAt: c.previewStartedAt ? new Date(c.previewStartedAt) : null,
+        previewLastFrameAt: c.previewLastFrameAt ? new Date(c.previewLastFrameAt) : null,
         startedAt: c.startedAt ? new Date(c.startedAt) : null,
         lastFrameAt: c.lastFrameAt ? new Date(c.lastFrameAt) : null,
       }));
       for (const ticket of data.previews) void preview(ticket);
       return { channels, destinations: data.destinations as DestinationRow[] };
+    },
+    async preview(c, previewSessionId, patch) {
+      changes.push({
+        type: 'preview',
+        id: c.id,
+        previewSessionId,
+        state: patch.state,
+        lastFrameAt: patch.lastFrameAt?.toISOString() ?? null,
+        finished: patch.finished ?? false,
+      });
     },
     async channel(c, patch) {
       changes.push({

@@ -19,6 +19,8 @@ type Relay = {
   connected: boolean;
 };
 type Program = {
+  preview: boolean;
+  startedAt: number;
   process: ChildProcess;
   sessionId: string;
   lastFrame: number;
@@ -42,18 +44,20 @@ function terminate(child?: ChildProcess) {
   }, 3000);
   timer.unref();
 }
-function startProgram(c: ChannelRow): Program {
+function startProgram(c: ChannelRow, preview = false): Program {
   const child = spawn(process.env.PYTHON_BIN ?? 'python3', ['-u', 'worker/program.py'], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const p: Program = {
     process: child,
-    sessionId: c.sessionId!,
-    lastFrame: c.lastFrameAt?.getTime() ?? 0,
+    preview,
+    startedAt: preview ? (c.previewStartedAt?.getTime() ?? Date.now()) : c.startedAt!.getTime(),
+    sessionId: preview ? c.previewSessionId! : c.sessionId!,
+    lastFrame: (preview ? c.previewLastFrameAt : c.lastFrameAt)?.getTime() ?? 0,
     stableSince: null,
     lastTelemetry: Date.now(),
     state: 'starting',
-    manual: c.manualFallback,
+    manual: c.manualFallback || !!c.automaticFallback,
     stopping: false,
     relays: new Map(),
   };
@@ -62,11 +66,11 @@ function startProgram(c: ChannelRow): Program {
   child.stdin!.write(
     JSON.stringify({
       input: rtsp(`input_${c.id}`),
-      output: rtmp(`program_${c.id}`),
+      output: rtmp(`${preview ? 'preview' : 'program'}_${c.id}`),
       title: c.sceneTitle,
       subtitle: c.sceneSubtitle,
       color: c.sceneColor,
-      manual: c.manualFallback,
+      manual: c.manualFallback || !!c.automaticFallback,
     }) + '\n',
   );
   child.stderr!.on('data', (chunk: Buffer) => {
@@ -111,6 +115,14 @@ async function stopProgram(c: ChannelRow, p: Program, reason: string) {
   p.process.stdin?.write(JSON.stringify({ action: 'stop' }) + '\n');
   terminate(p.process);
   programs.delete(c.id);
+  if (p.preview) {
+    await store.preview(c, p.sessionId, {
+      state: 'ended',
+      lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null,
+      finished: reason === 'timeout' || reason === 'worker_error',
+    });
+    return;
+  }
   for (const d of lastDestinations.filter((d) => d.channelId === c.id))
     await store.destination(d, p.sessionId, { status: 'idle', lastError: null });
   await store.channel(
@@ -201,46 +213,67 @@ async function startRelay(c: ChannelRow, p: Program, d: DestinationRow, relay: R
 async function reconcile() {
   const { channels, destinations } = await store.load();
   lastDestinations = destinations;
+  for (const [id, p] of programs)
+    if (!channels.some((c) => c.id === id)) {
+      p.stopping = true;
+      for (const relay of p.relays.values()) terminate(relay.process);
+      terminate(p.process);
+      programs.delete(id);
+    }
   for (const c of channels) {
     let p = programs.get(c.id);
-    if (p && (c.desired !== 'running' || c.sessionId !== p.sessionId)) {
+    const preview = c.desired !== 'running' && !!c.previewSessionId;
+    const expectedSession = preview
+      ? c.previewSessionId
+      : c.desired === 'running'
+        ? c.sessionId
+        : null;
+    if (p && (p.preview !== preview || expectedSession !== p.sessionId)) {
       await stopProgram(c, p, c.endReason ?? 'intentional');
       p = undefined;
     }
-    if (c.desired !== 'running') {
-      if (c.state === 'ending')
-        await store.channel(c, {
-          state: 'ended',
-          endedAt: new Date(),
-          endReason: c.endReason ?? 'intentional',
-        });
-      continue;
-    }
+    if (c.desired !== 'running' && c.state === 'ending')
+      await store.channel(c, {
+        state: 'ended',
+        endedAt: new Date(),
+        endReason: c.endReason ?? 'intentional',
+      });
+    if (c.desired !== 'running' && !preview) continue;
     if (!p) {
-      p = startProgram(c);
+      p = startProgram(c, preview);
       programs.set(c.id, p);
-      await log(c, 'session', 'Media program started. Connecting enabled destinations.');
+      if (!preview)
+        await log(c, 'session', 'Media program started. Connecting enabled destinations.');
     }
     if (Date.now() - p.lastTelemetry > 15000) {
       await stopProgram(c, p, 'worker_error');
       continue;
     }
-    if (p.manual !== c.manualFallback) {
-      p.manual = c.manualFallback;
+    const fallback = c.manualFallback || !!c.automaticFallback;
+    if (p.manual !== fallback) {
+      p.manual = fallback;
       p.process.stdin?.write(JSON.stringify({ action: 'fallback', enabled: p.manual }) + '\n');
     }
     const state = nextHealth({
-      desired: c.desired,
-      manual: c.manualFallback,
+      desired: 'running',
+      manual: c.manualFallback || !!c.automaticFallback,
       now: Date.now(),
       lastFrame: p.lastFrame,
       stableSince: p.stableSince,
-      started: c.startedAt!.getTime(),
+      started: p.startedAt,
       graceSeconds: c.graceSeconds,
     });
     if (state === 'ended') {
       await stopProgram(c, p, 'timeout');
       continue;
+    }
+    if (p.preview) {
+      p.state = state;
+      await store.preview(c, p.sessionId, {
+        state,
+        lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null,
+      });
+      continue; // Preview programs never create or connect destination relays.
     }
     if (state !== p.state) {
       p.state = state;
