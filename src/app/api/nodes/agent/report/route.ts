@@ -2,10 +2,18 @@ import { readCommandBody } from '@/lib/request-body';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { channel, destination, event } from '@/lib/db/schema';
+import { channel, destination, event, moblinPairing } from '@/lib/db/schema';
 import { nodeAuth, apiFailure } from '@/lib/nodes/security';
 import { ApiError } from '@/lib/access';
 const change = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('preview'),
+    id: z.string().uuid(),
+    previewSessionId: z.string().uuid(),
+    state: z.enum(['starting', 'live', 'degraded', 'fallback', 'recovering', 'ended']),
+    lastFrameAt: z.string().datetime().nullable(),
+    finished: z.boolean(),
+  }),
   z.object({
     type: z.literal('channel'),
     id: z.string().uuid(),
@@ -48,7 +56,27 @@ export async function POST(request: Request) {
         .for('update');
       const channels = new Map(owned.map((c) => [c.id, c]));
       for (const item of changes) {
-        const c = channels.get(item.type === 'channel' ? item.id : item.channelId);
+        const c = channels.get(
+          item.type === 'channel' || item.type === 'preview' ? item.id : item.channelId,
+        );
+        if (item.type === 'preview') {
+          if (c)
+            await tx
+              .update(moblinPairing)
+              .set({
+                previewState: item.state,
+                previewLastFrameAt: item.lastFrameAt ? new Date(item.lastFrameAt) : null,
+                previewUpdatedAt: new Date(),
+                ...(item.finished ? { previewSessionId: null } : {}),
+              })
+              .where(
+                and(
+                  eq(moblinPairing.channelId, c.id),
+                  eq(moblinPairing.previewSessionId, item.previewSessionId),
+                ),
+              );
+          continue;
+        }
         if (!c || c.sessionId !== item.sessionId) continue;
         if (
           c.desired === 'stopped' &&

@@ -2,6 +2,8 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
+ARG MOBLIN_GATEWAY_URL=http://moblin:3001
+ENV MOBLIN_GATEWAY_URL=${MOBLIN_GATEWAY_URL}
 COPY . .
 RUN npm run build
 FROM node:22-bookworm-slim

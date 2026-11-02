@@ -117,6 +117,36 @@ export const channel = pgTable('channel', {
   lastFrameAt: timestamp(),
   createdAt: timestamp().notNull().defaultNow(),
 });
+export const moblinPairing = pgTable('moblin_pairing', {
+  channelId: text()
+    .primaryKey()
+    .references(() => channel.id, { onDelete: 'cascade' }),
+  workspaceId: text()
+    .notNull()
+    .references(() => workspace.id, { onDelete: 'cascade' }),
+  pairedBy: text().references(() => user.id, { onDelete: 'set null' }),
+  enabled: boolean().notNull().default(false),
+  syncBroadcast: boolean().notNull().default(false),
+  encryptedPassword: text().notNull(),
+  revision: integer().notNull().default(1),
+  lowBitrateKbps: integer().notNull().default(500),
+  lowBitrateSeconds: integer().notNull().default(5),
+  recoverySeconds: integer().notNull().default(5),
+  connectionId: text(),
+  lastSeenAt: timestamp(),
+  lastStreaming: boolean(),
+  bitrateKbps: integer(),
+  bitrateAt: timestamp(),
+  lowSince: timestamp(),
+  healthySince: timestamp(),
+  lowBitrateActive: boolean().notNull().default(false),
+  previewSessionId: text(),
+  previewStartedAt: timestamp(),
+  previewState: text().notNull().default('idle'),
+  previewLastFrameAt: timestamp(),
+  previewUpdatedAt: timestamp(),
+  lastError: text(),
+});
 export const destination = pgTable('destination', {
   id: text().primaryKey(),
   channelId: text()

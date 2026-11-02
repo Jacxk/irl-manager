@@ -1,3 +1,5 @@
+import { moblinPreviews } from '@/lib/moblin/previews';
+import { changeBroadcast } from '@/lib/broadcast';
 import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
 import { readCommandBody } from '@/lib/request-body';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -34,6 +36,7 @@ function fail(error: unknown) {
 export async function GET() {
   try {
     const ctx = await access();
+    const { values: settings } = await readSettings();
     const channels = await db
       .select()
       .from(channel)
@@ -86,12 +89,24 @@ export async function GET() {
       .from(member)
       .innerJoin(user, eq(member.userId, user.id))
       .where(eq(member.workspaceId, ctx.workspace.id));
+    const protectedPreviews = await moblinPreviews(
+      [...new Set(channels.map((c) => c.serverId))],
+      settings,
+    );
     return NextResponse.json(
       {
+        previewOnByDefault: settings.previewOnByDefault,
+        allowPreLivePreview: settings.allowPreLivePreview,
         user: ctx.user,
         workspace: ctx.workspace,
         role: ctx.membership.role,
-        channels: channels.map((c) => ({ ...c, ingestKey: undefined })),
+        channels: channels.map((c) => ({
+          ...c,
+          ingestKey: undefined,
+          previewSessionId: protectedPreviews.selected.get(c.id)?.sessionId ?? null,
+          previewState: protectedPreviews.selected.get(c.id)?.state ?? 'idle',
+          previewQueued: protectedPreviews.queued.has(c.id),
+        })),
         destinations,
         events,
         servers: servers.map(({ id, name, host, region, heartbeatAt }) => ({
@@ -340,49 +355,8 @@ export async function POST(request: Request) {
         }
         if (cmd.action === 'fallback')
           await tx.update(channel).set({ manualFallback: cmd.enabled }).where(eq(channel.id, c.id));
-        if (cmd.action === 'start') {
-          const enabled = await tx.query.destination.findFirst({
-            where: and(eq(destination.channelId, c.id), eq(destination.enabled, true)),
-          });
-          if (!enabled) throw new ApiError(400, 'Add and enable at least one destination.');
-          const server = await tx.query.mediaServer.findFirst({
-            where: eq(mediaServer.id, c.serverId),
-          });
-          if (server?.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
-          if (!server?.heartbeatAt || Date.now() - server.heartbeatAt.getTime() > 15000)
-            throw new ApiError(
-              409,
-              'This node is offline. Start its media worker before going live.',
-            );
-          const updated = await tx
-            .update(channel)
-            .set({
-              desired: 'running',
-              state: 'starting',
-              sessionId: randomUUID(),
-              startedAt: new Date(),
-              endedAt: null,
-              endReason: null,
-              manualFallback: false,
-              lastFrameAt: null,
-            })
-            .where(and(eq(channel.id, c.id), eq(channel.desired, 'stopped')))
-            .returning();
-          if (updated.length)
-            await tx.insert(event).values({
-              id: randomUUID(),
-              channelId: c.id,
-              sessionId: updated[0].sessionId,
-              kind: 'session',
-              message: 'Session requested. Starting all enabled destinations.',
-            });
-        }
-        if (cmd.action === 'stop') {
-          await tx
-            .update(channel)
-            .set({ desired: 'stopped', state: 'ending', endReason: 'intentional' })
-            .where(and(eq(channel.id, c.id), eq(channel.desired, 'running')));
-        }
+        if (cmd.action === 'start' || cmd.action === 'stop')
+          await changeBroadcast(tx, c, cmd.action);
       }
       return NextResponse.json({ ok: true });
     });

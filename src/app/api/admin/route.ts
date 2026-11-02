@@ -8,6 +8,7 @@ import {
   instanceSetting,
   mediaServer,
   session,
+  serviceHeartbeat,
   user,
   verification,
 } from '@/lib/db/schema';
@@ -46,19 +47,30 @@ export async function GET() {
       .orderBy(user.createdAt);
     const audit = await db.select().from(adminAudit).orderBy(desc(adminAudit.createdAt)).limit(100);
     const sharedNodes = await db.select().from(mediaServer).where(eq(mediaServer.shared, true));
+    const moblin = await db.query.serviceHeartbeat.findFirst({
+      where: eq(serviceHeartbeat.id, 'moblin'),
+    });
     return response({
       fields: settings.fields,
       users,
       audit,
       sharedNodes,
       actorId: actor.id,
-      health: { database: 'Connected', application: 'Running' },
+      health: {
+        database: 'Connected',
+        application: 'Running',
+        'Moblin gateway':
+          moblin && Date.now() - moblin.at.getTime() < 15000 ? 'Running' : 'Not running (optional)',
+      },
       deployment: [
         'DATABASE_URL',
         'ENCRYPTION_KEY',
         'BETTER_AUTH_SECRET',
         'MEDIA_WORKER_TOKEN',
         'LOCK_BY_ENVIRONMENT',
+        'MOBLIN_BIND',
+        'MOBLIN_PORT',
+        'MOBLIN_HOST_BIND',
       ].map((name) => ({ name, configured: process.env[name] !== undefined })),
     });
   } catch (e) {
@@ -139,14 +151,12 @@ export async function POST(request: Request) {
               target: instanceSetting.key,
               set: { value, revision: c.revision + 1, updatedAt: new Date() },
             });
-          await tx
-            .insert(adminAudit)
-            .values({
-              id: randomUUID(),
-              actorId: actor.id,
-              target: key,
-              action: c.reset ? 'setting.reset' : 'setting.update',
-            });
+          await tx.insert(adminAudit).values({
+            id: randomUUID(),
+            actorId: actor.id,
+            target: key,
+            action: c.reset ? 'setting.reset' : 'setting.update',
+          });
         }
         return;
       } else if (cmd.action === 'sharedNode') {
@@ -211,14 +221,12 @@ export async function POST(request: Request) {
                 like(verification.identifier, 'reset-password:%'),
               ),
             );
-          await tx
-            .insert(verification)
-            .values({
-              id: randomUUID(),
-              identifier: `reset-password:${token}`,
-              value: person.id,
-              expiresAt: new Date(Date.now() + 30 * 60_000),
-            });
+          await tx.insert(verification).values({
+            id: randomUUID(),
+            identifier: `reset-password:${token}`,
+            value: person.id,
+            expiresAt: new Date(Date.now() + 30 * 60_000),
+          });
           resetLink = `${values.publicUrl}/reset-password#${token}`;
         }
         target = person.id;

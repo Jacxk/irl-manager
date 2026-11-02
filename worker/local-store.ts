@@ -1,7 +1,10 @@
+import { moblinPreviews } from '../src/lib/moblin/previews';
+import { moblinFallbackActive } from '../src/lib/moblin/protocol';
+import { readSettings } from '../src/lib/settings';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { db, sql } from '../src/lib/db';
-import { channel, destination, event, mediaServer } from '../src/lib/db/schema';
+import { channel, destination, event, mediaServer, moblinPairing } from '../src/lib/db/schema';
 import { decrypt } from '../src/lib/crypto';
 import type { Store } from './store';
 export async function localStore(nodeId: string): Promise<Store> {
@@ -26,7 +29,42 @@ export async function localStore(nodeId: string): Promise<Store> {
             channels.map((c) => c.id),
           ),
         );
-      return { channels, destinations };
+      const { values } = await readSettings();
+      const pairings = values.allowMoblinControl
+        ? await db
+            .select()
+            .from(moblinPairing)
+            .where(
+              (await import('drizzle-orm')).inArray(
+                moblinPairing.channelId,
+                channels.map((c) => c.id),
+              ),
+            )
+        : [];
+      const previews = await moblinPreviews([nodeId], values);
+      return {
+        channels: channels.map((c) => ({
+          ...c,
+          previewSessionId: previews.selected.get(c.id)?.sessionId ?? null,
+          previewStartedAt: previews.selected.get(c.id)?.startedAt ?? null,
+          previewLastFrameAt: previews.selected.get(c.id)?.lastFrameAt ?? null,
+          automaticFallback: pairings.some((p) => p.channelId === c.id && moblinFallbackActive(p)),
+        })),
+        destinations,
+      };
+    },
+    async preview(c, sessionId, patch) {
+      await db
+        .update(moblinPairing)
+        .set({
+          previewState: patch.state,
+          previewLastFrameAt: patch.lastFrameAt,
+          previewUpdatedAt: new Date(),
+          ...(patch.finished ? { previewSessionId: null } : {}),
+        })
+        .where(
+          and(eq(moblinPairing.channelId, c.id), eq(moblinPairing.previewSessionId, sessionId)),
+        );
     },
     async channel(c, patch) {
       await db

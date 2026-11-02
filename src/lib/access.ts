@@ -5,14 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { getAuth } from './auth';
 import { db } from './db';
 import { member, workspace, user } from './db/schema';
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+import { ApiError } from './api-error';
+export { ApiError } from './api-error';
 export async function access() {
   const session = await (await getAuth()).api.getSession({ headers: await headers() });
   if (!session || !developmentAccountAllowed(session.user.id))
