@@ -15,6 +15,7 @@ export default function ResetPassword() {
     <main className="mx-auto max-w-md p-8">
       <h1 className="text-2xl mb-5">Reset password</h1>
       <form
+        method="post"
         className="space-y-4"
         onSubmit={async (e) => {
           e.preventDefault();

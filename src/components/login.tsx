@@ -111,7 +111,7 @@ export function Login({
               ? 'Create an account to set up your workspace.'
               : 'Sign in and take your stream out into the world.'}
           </p>
-          <form onSubmit={submit} className="mt-8 space-y-5">
+          <form method="post" onSubmit={submit} className="mt-8 space-y-5">
             {signup && (
               <label className="block space-y-2">
                 <span className="text-sm">Your name</span>
