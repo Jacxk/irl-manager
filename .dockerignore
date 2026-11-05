@@ -1,8 +1,9 @@
 node_modules
 .next
 .git
-.env
-.env.local
+.env*
+!.env.example
 *.tsbuildinfo
 
 .irl-installer
+/audit/

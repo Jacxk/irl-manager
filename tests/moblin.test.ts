@@ -112,8 +112,8 @@ test('Moblin policies and defaults validate and preserve environment precedence'
   );
   assert.throws(() => resolveSetting('moblinPublicUrl', 'wss://example.com/moblin?secret=x', {}));
   assert.equal(
-    resolveSetting('moblinPublicUrl', 'ws://192.168.1.221:3001/moblin', {}).value,
-    'ws://192.168.1.221:3001/moblin',
+    resolveSetting('moblinPublicUrl', 'ws://localhost:3001/moblin', {}).value,
+    'ws://localhost:3001/moblin',
   );
   assert.equal(
     moblinEndpoint('https://example.com', '', 'channel'),
