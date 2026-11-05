@@ -58,6 +58,14 @@ npm run build
 
 Integration tests need additional disposable services and fixtures; see [validation notes](docs/VALIDATION.md) and the README. Include screenshots for UI changes and mention checks you could not run.
 
+### Merging pull requests
+
+Target `main` unless the PR explicitly depends on another open PR. When a base PR merges, check that its dependent PR targets the intended branch and that its changes reach `main`.
+
+CI validates GitHub's proposed merge for PRs targeting `main`. Branch protection requires the branch to be up to date and CI to pass before merging. When `main` changes, merge or rebase it into the PR branch, inspect the resulting diff and conflict resolutions, and wait for CI and Codex review again. Add regression tests for behavior that must survive other changes; a clean merge and passing checks cannot detect every unintended behavior change.
+
+Integration suites requiring services are not included in this CI job and should be run separately when relevant. `npm test` runs only `tests/*.test.ts`. See [validation notes](docs/VALIDATION.md) for integration fixtures.
+
 ## Administration scope
 
 The fixture and development badge are tied to the runtime development mode, not an instance setting. No admin toggle applies: a deployed instance must not enable a shared test administrator or hide its runtime identity. Existing instance policies remain in force for all regular operations. This migration only creates missing development fixtures; it does not modify existing resources or weaken password policy.
