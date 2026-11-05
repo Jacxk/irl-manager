@@ -52,6 +52,22 @@ try {
   });
   assert.equal(reset.status, 200);
   const { resetLink } = await reset.json();
+  // Before hydration (or without JavaScript), credentials must never become a URL query.
+  const noJs = await browser.newContext({ javaScriptEnabled: false });
+  const loginWithoutJs = await noJs.newPage();
+  await loginWithoutJs.goto(base + '/login');
+  await expect(loginWithoutJs.getByRole('button', { name: 'Sign in', exact: true })).toBeDisabled();
+  assert.match(
+    (await loginWithoutJs.locator('noscript').textContent()) ?? '',
+    /JavaScript is required to sign in/,
+  );
+  await loginWithoutJs.close();
+  const resetWithoutJs = await noJs.newPage();
+  await resetWithoutJs.goto(resetLink);
+  await expect(resetWithoutJs.getByRole('status')).toContainText('Checking your reset link');
+  await expect(resetWithoutJs.locator('input[type="password"]')).toHaveCount(0);
+  await resetWithoutJs.close();
+  await noJs.close();
   const context = await browser.newContext(),
     page = await context.newPage();
   const errors: string[] = [];
@@ -59,32 +75,30 @@ try {
   await page.goto(resetLink);
   const replacement = randomUUID();
   await page.getByLabel('New password', { exact: true }).fill(replacement);
+  await page.getByLabel('Confirm new password', { exact: true }).fill(replacement);
   await page.getByRole('button', { name: 'Update password', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Password updated. You can now sign in.');
+  await expect(page).toHaveURL(base + '/login');
   expect(new URL(page.url()).hash).toBe('');
-  await expect(page.getByRole('button', { name: 'Update password', exact: true })).toBeDisabled();
-  await expect(page.getByLabel('New password', { exact: true })).toHaveValue('');
   assert.equal(
     (await fetch(base + '/api/control', { headers: { Cookie: target.cookie } })).status,
     401,
   );
-  await page.getByRole('link', { name: 'Return to sign in' }).click();
   await sql`delete from rate_limit`;
   await page.getByLabel('Email', { exact: true }).fill(target.email);
   await page.getByLabel('Password', { exact: true }).fill(target.password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
+  assert.equal(new URL(page.url()).search, '');
   await sql`delete from rate_limit`;
   await page.getByLabel('Password', { exact: true }).fill(replacement);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your control room.' })).toBeVisible();
   await page.goto(resetLink);
-  await page.getByLabel('New password', { exact: true }).fill(randomUUID());
-  await page.getByRole('button', { name: 'Update password', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText(/invalid|expired|failed/i);
+  await expect(page.getByRole('alert')).toContainText('This link has expired.');
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
   expect(errors).toEqual([]);
   console.log(
-    'PASS browser reset, cleared token/password, stable success, session revocation, old/new sign-in and single-use link; malformed admin/removal envelopes',
+    'PASS browser reset, cleared token, success redirect, session revocation, old/new sign-in and single-use link; malformed admin/removal envelopes',
   );
 } catch (error) {
   throw new Error(String(error).replace(/#[0-9a-f]{64}/gi, '#[redacted]'));

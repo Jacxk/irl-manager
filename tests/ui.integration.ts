@@ -11,6 +11,16 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(base + '/login');
   await page.getByRole('heading', { name: 'Welcome back.' }).waitFor();
+  await page.route('**/api/auth/sign-in/email', (route) =>
+    route.fulfill({ status: 401, json: { message: 'Invalid email or password' } }),
+  );
+  await page.getByLabel('Email', { exact: true }).fill('wrong@example.com');
+  await page.getByLabel('Password', { exact: true }).fill('wrong-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('alert').getByText('Invalid email or password').waitFor();
+  assert.equal(await page.getByLabel('Email', { exact: true }).inputValue(), 'wrong@example.com');
+  assert.equal(await page.getByLabel('Password', { exact: true }).inputValue(), 'wrong-password');
+  await page.unroute('**/api/auth/sign-in/email');
   await page.screenshot({
     path: '/tmp/irl-manager-login.png',
     fullPage: true,

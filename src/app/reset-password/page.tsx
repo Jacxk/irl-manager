@@ -134,7 +134,7 @@ export default function ResetPassword() {
               <p className="mt-3 leading-relaxed text-muted-foreground">
                 Enter a new password below. It must be at least {minPasswordLength} characters long.
               </p>
-              <form onSubmit={submit} className="mt-8 space-y-5">
+              <form method="post" onSubmit={submit} className="mt-8 space-y-5">
                 <div className="space-y-2">
                   <Label htmlFor="password">New password</Label>
                   <Input
