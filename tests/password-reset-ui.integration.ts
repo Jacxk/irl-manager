@@ -52,6 +52,23 @@ try {
   });
   assert.equal(reset.status, 200);
   const { resetLink } = await reset.json();
+  // Before hydration (or without JavaScript), credentials must never become a URL query.
+  const noJs = await browser.newContext({ javaScriptEnabled: false });
+  for (const [path, fields, button] of [
+    ['/login', [['Email', target.email], ['Password', target.password]], 'Sign in'],
+    ['/reset-password', [['New password', randomUUID()]], 'Update password'],
+  ] as const) {
+    const page = await noJs.newPage();
+    await page.goto(base + path);
+    for (const [label, value] of fields) await page.getByLabel(label, { exact: true }).fill(value);
+    const request = page.waitForRequest((request) => request.isNavigationRequest());
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const submission = await request;
+    assert.equal(submission.method(), 'POST');
+    assert.equal(new URL(submission.url()).search, '');
+    await page.close();
+  }
+  await noJs.close();
   const context = await browser.newContext(),
     page = await context.newPage();
   const errors: string[] = [];
@@ -74,6 +91,7 @@ try {
   await page.getByLabel('Password', { exact: true }).fill(target.password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
+  assert.equal(new URL(page.url()).search, '');
   await sql`delete from rate_limit`;
   await page.getByLabel('Password', { exact: true }).fill(replacement);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
