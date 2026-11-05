@@ -21,7 +21,8 @@
     "predev": "NODE_ENV=development tsx scripts/migrate-dev.ts",
     "db:migrate-dev": "tsx scripts/migrate-dev.ts",
     "moblin": "tsx moblin/index.ts",
-    "db:migrate-moblin": "tsx scripts/migrate-moblin.ts"
+    "db:migrate-moblin": "tsx scripts/migrate-moblin.ts",
+    "admin:reset-password": "tsx scripts/reset-admin-password.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.4.1",
