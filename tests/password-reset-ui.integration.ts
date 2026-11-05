@@ -54,8 +54,15 @@ try {
   const { resetLink } = await reset.json();
   // Before hydration (or without JavaScript), credentials must never become a URL query.
   const noJs = await browser.newContext({ javaScriptEnabled: false });
+  const loginWithoutJs = await noJs.newPage();
+  await loginWithoutJs.goto(base + '/login');
+  await expect(loginWithoutJs.getByRole('button', { name: 'Sign in', exact: true })).toBeDisabled();
+  assert.match(
+    (await loginWithoutJs.locator('noscript').textContent()) ?? '',
+    /JavaScript is required to sign in/,
+  );
+  await loginWithoutJs.close();
   for (const [path, fields, button] of [
-    ['/login', [['Email', target.email], ['Password', target.password]], 'Sign in'],
     ['/reset-password', [['New password', randomUUID()]], 'Update password'],
   ] as const) {
     const page = await noJs.newPage();
