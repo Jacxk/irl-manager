@@ -1,11 +1,13 @@
 'use client';
 import Image from 'next/image';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUpRight, Radio, ShieldCheck, Waypoints, Wifi } from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+const subscribe = () => () => {};
+
 export function Login({
   registrationEnabled,
   minPasswordLength,
@@ -20,6 +22,11 @@ export function Login({
   logoUrl: string;
 }) {
   const router = useRouter();
+  const hydrated = useSyncExternalStore(
+    subscribe,
+    () => true,
+    () => false,
+  );
   const [signup, setSignup] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37,11 +44,22 @@ export function Login({
       const result = signup
         ? await authClient.signUp.email(data)
         : await authClient.signIn.email(data);
-      if (result.error) setError(result.error.message ?? 'Unable to sign in.');
-      else {
-        router.push('/');
-        router.refresh();
+      if (result.error) {
+        setError(
+          result.error.message ||
+            (signup ? 'Unable to create your account.' : 'Unable to sign in.'),
+        );
+        return;
       }
+      const session = await authClient.getSession();
+      if (session.error || !session.data?.session) {
+        setError(
+          'Sign-in could not be completed. Please check that cookies are enabled and try again.',
+        );
+        return;
+      }
+      router.push('/');
+      router.refresh();
     } catch {
       setError('Unable to reach the server. Please try again.');
     } finally {
@@ -150,11 +168,14 @@ export function Login({
                 {error}
               </p>
             )}
-            <Button className="w-full" disabled={busy}>
+            <Button type="submit" className="w-full" disabled={busy || !hydrated}>
               {busy ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}
               <ArrowUpRight size={16} />
             </Button>
           </form>
+          <noscript>
+            <p className="mt-4 text-sm text-destructive">JavaScript is required to sign in.</p>
+          </noscript>
           {registrationEnabled && (
             <p className="mt-7 text-sm text-muted-foreground">
               {signup ? 'Already have an account?' : 'New here?'}{' '}
