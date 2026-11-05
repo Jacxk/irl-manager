@@ -17,6 +17,9 @@ type Relay = {
   attempts: number;
   stopping: boolean;
   connected: boolean;
+  bytes?: number;
+  measuredAt?: number;
+  kbps?: number;
 };
 type Program = {
   preview: boolean;
@@ -26,6 +29,7 @@ type Program = {
   lastFrame: number;
   stableSince: number | null;
   lastTelemetry: number;
+  receiveKbps: number | null;
   state: string;
   manual: boolean;
   stopping: boolean;
@@ -56,6 +60,7 @@ function startProgram(c: ChannelRow, preview = false): Program {
     lastFrame: (preview ? c.previewLastFrameAt : c.lastFrameAt)?.getTime() ?? 0,
     stableSince: null,
     lastTelemetry: Date.now(),
+    receiveKbps: null,
     state: 'starting',
     manual: c.manualFallback || !!c.automaticFallback,
     stopping: false,
@@ -91,6 +96,9 @@ function startProgram(c: ChannelRow, preview = false): Program {
       if (health.type === 'health') {
         if (process.env.MEDIA_DEBUG === '1') console.log('Health', JSON.stringify(health));
         p.lastTelemetry = Date.now();
+        p.receiveKbps = Number.isFinite(health.receiveKbps)
+          ? Math.max(0, Math.round(health.receiveKbps))
+          : null;
         if (health.lastFrameAgeMs !== null) p.lastFrame = Date.now() - health.lastFrameAgeMs;
         p.stableSince = health.stableForMs > 0 ? Date.now() - health.stableForMs : null;
       }
@@ -148,6 +156,9 @@ async function stopProgram(c: ChannelRow, p: Program, reason: string) {
 async function startRelay(c: ChannelRow, p: Program, d: DestinationRow, relay: Relay) {
   relay.stopping = false;
   relay.connected = false;
+  relay.bytes = undefined;
+  relay.measuredAt = undefined;
+  relay.kbps = undefined;
   const output = `${d.url.replace(/\/$/, '')}/${await store.key(d)}`;
   // Spawn without a shell. Output destinations are independent processes.
   // FFmpeg requires an output URL argument; stderr is discarded to avoid credential exposure.
@@ -202,6 +213,19 @@ async function startRelay(c: ChannelRow, p: Program, d: DestinationRow, relay: R
   child.on('error', failure);
   child.on('exit', failure);
   createInterface({ input: child.stdout! }).on('line', (line) => {
+    if (/^total_size=\d+$/.test(line)) {
+      const bytes = Number(line.split('=')[1]);
+      const now = Date.now();
+      if (
+        relay.bytes !== undefined &&
+        relay.measuredAt &&
+        now > relay.measuredAt &&
+        bytes >= relay.bytes
+      )
+        relay.kbps = Math.round(((bytes - relay.bytes) * 8) / (now - relay.measuredAt));
+      relay.bytes = bytes;
+      relay.measuredAt = now;
+    }
     if (!relay.connected && /^out_time_us=[1-9]/.test(line) && !relay.stopping && !p.stopping) {
       relay.connected = true;
       void store
@@ -289,7 +313,22 @@ async function reconcile() {
               : 'Input detected. Waiting for a stable connection.',
       );
     }
-    await store.channel(c, { state, lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null });
+    await store.channel(c, {
+      state,
+      lastFrameAt: p.lastFrame ? new Date(p.lastFrame) : null,
+      receiveKbps: Date.now() - p.lastTelemetry < 5000 ? p.receiveKbps : null,
+      sendKbps: [...p.relays.values()].some(
+        (r) => r.connected && r.measuredAt && Date.now() - r.measuredAt < 5000,
+      )
+        ? [...p.relays.values()].reduce(
+            (sum, r) =>
+              sum +
+              (r.connected && r.measuredAt && Date.now() - r.measuredAt < 5000 ? (r.kbps ?? 0) : 0),
+            0,
+          )
+        : null,
+      telemetryAt: new Date(),
+    });
     const targets = destinations.filter((d) => d.channelId === c.id);
     for (const d of targets) {
       let relay = p.relays.get(d.id);

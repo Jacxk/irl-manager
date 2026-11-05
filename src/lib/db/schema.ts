@@ -115,6 +115,9 @@ export const channel = pgTable('channel', {
   endedAt: timestamp(),
   endReason: text(),
   lastFrameAt: timestamp(),
+  receiveKbps: integer(),
+  sendKbps: integer(),
+  telemetryAt: timestamp(),
   createdAt: timestamp().notNull().defaultNow(),
 });
 export const moblinPairing = pgTable('moblin_pairing', {

@@ -7,3 +7,7 @@ __pycache__/
 
 .irl-installer/
 /audit/
+
+# Native crash dumps must not be scanned by development tooling.
+core
+core.*

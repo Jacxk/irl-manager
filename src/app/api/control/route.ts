@@ -1,5 +1,7 @@
 import { moblinPreviews } from '@/lib/moblin/previews';
 import { changeBroadcast } from '@/lib/broadcast';
+
+import { canDeleteChannel } from '@/lib/channel-policy';
 import { lockWorkspaceAccess } from '@/lib/workspace-mutation';
 import { readCommandBody } from '@/lib/request-body';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -159,6 +161,7 @@ export async function POST(request: Request) {
         [
           'createServer',
           'createChannel',
+          'deleteChannel',
           'addDestination',
           'deleteDestination',
           'rotateKey',
@@ -187,6 +190,11 @@ export async function POST(request: Request) {
             region: cmd.region,
           });
         });
+      } else if (cmd.action === 'deleteChannel') {
+        const c = channelContext!.channel;
+        if (!canDeleteChannel(c))
+          throw new ApiError(409, 'Stop the broadcast before deleting this channel.');
+        await tx.delete(channel).where(eq(channel.id, c.id));
       } else if (cmd.action === 'createChannel') {
         const server = await tx.query.mediaServer.findFirst({
           where: and(

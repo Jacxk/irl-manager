@@ -60,6 +60,7 @@ export const commandSchema = z.discriminatedUnion('action', [
     enabled: z.boolean(),
   }),
   z.object({ action: z.literal('deleteDestination'), channelId: id, destinationId: id }),
+  z.object({ action: z.literal('deleteChannel'), channelId: id }),
   z.object({ action: z.literal('start'), channelId: id }),
   z.object({ action: z.literal('stop'), channelId: id }),
   z.object({ action: z.literal('fallback'), channelId: id, enabled: z.boolean() }),

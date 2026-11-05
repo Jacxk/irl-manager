@@ -16,6 +16,9 @@ const change = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('channel'),
+    receiveKbps: z.number().int().min(0).max(2147483647).nullable().optional(),
+    sendKbps: z.number().int().min(0).max(2147483647).nullable().optional(),
+    telemetryAt: z.string().datetime().optional(),
     id: z.string().uuid(),
     sessionId: z.string().uuid().nullable(),
     state: z.enum(['starting', 'live', 'degraded', 'fallback', 'recovering', 'ended']),
@@ -89,6 +92,9 @@ export async function POST(request: Request) {
             .update(channel)
             .set({
               state: item.state,
+              receiveKbps: item.receiveKbps ?? null,
+              sendKbps: item.sendKbps ?? null,
+              telemetryAt: item.telemetryAt ? new Date() : null,
               ...(item.lastFrameAt !== undefined
                 ? { lastFrameAt: item.lastFrameAt ? new Date(item.lastFrameAt) : null }
                 : {}),

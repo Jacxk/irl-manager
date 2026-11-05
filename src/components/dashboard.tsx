@@ -1,6 +1,7 @@
 'use client';
 import { MoblinControl } from './moblin-control';
 import Image from 'next/image';
+import { canDeleteChannel } from '@/lib/channel-policy';
 import { UserMenu } from './user-menu';
 import { toast } from 'sonner';
 import {
@@ -53,7 +54,15 @@ import { cn } from '@/lib/utils';
 import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
-  'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
+  | 'channel'
+  | 'node'
+  | 'destination'
+  | 'scene'
+  | 'credentials'
+  | 'member'
+  | 'stop'
+  | 'deleteChannel'
+  | null;
 const nav: { name: View; icon: LucideIcon }[] = [
   { name: 'Overview', icon: LayoutDashboard },
   { name: 'Channels', icon: Radio },
@@ -77,6 +86,10 @@ const titles: Record<Exclude<Modal, null>, [string, string]> = {
   member: [
     'Add a teammate',
     'Your teammate must create an account first. They’ll receive an invitation in their dashboard.',
+  ],
+  deleteChannel: [
+    'Delete channel?',
+    'Permanently delete this channel, its destinations, credentials, and activity. Stop the broadcast first.',
   ],
   stop: [
     'End this broadcast?',
@@ -174,6 +187,7 @@ export function Dashboard() {
     nav.find((item) => item.name.toLowerCase() === searchParams.get('view'))?.name ?? 'Overview';
   const setView = (next: View) =>
     router.push(next === 'Overview' ? '/' : `/?view=${next.toLowerCase()}`, { scroll: false });
+  const [details, setDetails] = useState(false);
   const [selected, setSelected] = useState('');
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState('');
@@ -284,6 +298,7 @@ export function Dashboard() {
         );
       if (payload.action === 'toggleDestination')
         toast.success(payload.enabled ? 'Destination enabled.' : 'Destination disabled.');
+      if (payload.action === 'deleteChannel') toast.success('Channel deleted.');
       if (payload.action === 'deleteDestination') toast.success('Destination removed.');
       if (payload.action === 'removeMember') toast.success('Teammate removed.');
       if (payload.action === 'acceptInvitation') toast.success('Workspace joined.');
@@ -597,7 +612,7 @@ export function Dashboard() {
               }
               disabled={
                 ((view === 'Destinations' || view === 'Scenes') && (!channel || active)) ||
-                ((view === 'Overview' || view === 'Channels') && !data.servers.length)
+                ((view === 'Overview' || (view === 'Channels' && details)) && !data.servers.length)
               }
             >
               <Plus size={15} />
@@ -678,50 +693,82 @@ export function Dashboard() {
             </Link>
           </div>
         )}
-        {view === 'Overview' && (
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-8">
-            {[
-              {
-                label: 'ACTIVE CHANNELS',
-                value: data.channels.filter((c) => c.desired === 'running').length,
-                detail: `${data.channels.length} channels in your workspace`,
-                icon: Radio,
-              },
-              {
-                label: 'LIVE DESTINATIONS',
-                value: data.destinations.filter((d) => d.status === 'connected').length,
-                detail: `${data.destinations.filter((d) => d.enabled).length} destinations enabled`,
-                icon: Waypoints,
-              },
-              {
-                label: 'FALLBACK PROTECTION',
-                value: data.channels.filter((c) => c.state === 'fallback').length
-                  ? 'Active'
-                  : 'Ready',
-                detail: 'Automatic scene switching',
-                icon: ShieldCheck,
-              },
-              {
-                label: 'MEDIA NODES',
-                value: `${data.servers.filter((s) => online(s.heartbeatAt)).length} / ${data.servers.length}`,
-                detail: 'Nodes currently connected',
-                icon: ServerIcon,
-              },
-            ].map((stat) => (
-              <div className="surface p-4 md:p-5" key={stat.label}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="label text-[9px]">{stat.label}</span>
-                  <stat.icon size={15} className="text-muted-foreground" />
-                </div>
-                <p className="mt-4 mb-2 text-[28px] leading-none font-medium tracking-tight">
-                  {stat.value}
-                </p>
-                <p className="text-[11px] text-muted-foreground">{stat.detail}</p>
-              </div>
-            ))}
-          </div>
+        {view === 'Channels' && !details && (
+          <section className="surface overflow-hidden">
+            <Table aria-label="Channels">
+              <TableHeader>
+                <TableRow>
+                  {['Channel', 'Node', 'Health', 'Destinations', 'Actions'].map((h) => (
+                    <TableHead key={h}>{h}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.channels.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>
+                      {c.name}
+                      <p className="text-xs text-muted-foreground uppercase mt-1">{c.protocol}</p>
+                    </TableCell>
+                    <TableCell>{data.servers.find((s) => s.id === c.serverId)?.name}</TableCell>
+                    <TableCell>
+                      <Status
+                        state={
+                          online(data.servers.find((s) => s.id === c.serverId)?.heartbeatAt ?? null)
+                            ? c.state
+                            : 'offline'
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {data.destinations.filter((d) => d.channelId === c.id).length}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelected(c.id);
+                            setDetails(true);
+                          }}
+                        >
+                          Manage
+                        </Button>
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={busy || !canDeleteChannel(c)}
+                            onClick={() => {
+                              setSelected(c.id);
+                              open('deleteChannel');
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!data.channels.length && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No channels yet. Create a channel to get started.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </section>
         )}
-        {(view === 'Overview' || view === 'Channels') && (
+        {view === 'Channels' && details && (
+          <Button variant="outline" className="mb-5" onClick={() => setDetails(false)}>
+            Back to channels
+          </Button>
+        )}
+        {(view === 'Overview' || (view === 'Channels' && details)) && (
           <>
             {!channel ? (
               <div className="surface dot-grid p-12 md:p-20 text-center">
@@ -763,7 +810,12 @@ export function Dashboard() {
                     </button>
                   ))}
                 </div>
-                <div className="grid xl:grid-cols-[minmax(0,1fr)_340px] gap-5">
+                <div
+                  className={cn(
+                    'grid gap-5',
+                    view === 'Channels' && 'xl:grid-cols-[minmax(0,1fr)_340px]',
+                  )}
+                >
                   <section className="surface overflow-hidden">
                     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-border">
                       <div className="flex items-center gap-3">
@@ -832,6 +884,55 @@ export function Dashboard() {
                           <EyeOff size={14} />
                         </button>
                       )}
+                    </div>
+                    <div
+                      className="flex flex-wrap gap-6 p-4 border-t border-border text-xs"
+                      aria-label="Stream health"
+                    >
+                      <div>
+                        Receiving ·{' '}
+                        <Status
+                          state={
+                            !online(server?.heartbeatAt ?? null)
+                              ? 'offline'
+                              : channel.state === 'live'
+                                ? 'live'
+                                : channel.state
+                          }
+                        />
+                        <p className="mt-2 text-muted-foreground">
+                          {active &&
+                          online(server?.heartbeatAt ?? null) &&
+                          channel.telemetryAt &&
+                          now - new Date(channel.telemetryAt).getTime() < 15000 &&
+                          channel.receiveKbps !== null
+                            ? `${channel.receiveKbps} kbps`
+                            : 'Bitrate unavailable'}
+                        </p>
+                      </div>
+                      <div>
+                        Sending ·{' '}
+                        <Status
+                          state={
+                            !online(server?.heartbeatAt ?? null)
+                              ? 'offline'
+                              : destinations.some((d) => d.enabled && d.status === 'retrying')
+                                ? 'retrying'
+                                : destinations.some((d) => d.enabled && d.status === 'connected')
+                                  ? 'connected'
+                                  : 'idle'
+                          }
+                        />
+                        <p className="mt-2 text-muted-foreground">
+                          {active &&
+                          online(server?.heartbeatAt ?? null) &&
+                          channel.telemetryAt &&
+                          now - new Date(channel.telemetryAt).getTime() < 15000 &&
+                          channel.sendKbps !== null
+                            ? `${channel.sendKbps} kbps total`
+                            : 'Bitrate unavailable'}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-border">
                       <div className="flex gap-4 text-[11px] text-muted-foreground">
@@ -913,129 +1014,151 @@ export function Dashboard() {
                       />
                     </div>
                   </section>
-                  <section className="surface p-5 flex flex-col">
-                    {panelHeader(
-                      'Destinations',
-                      'One program. Multiple platforms.',
-                      admin && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          disabled={active}
-                          aria-label="Add destination"
-                          onClick={() => open('destination')}
-                        >
-                          <Plus size={16} />
-                        </Button>
-                      ),
-                    )}
-                    <div className="space-y-3">
-                      {destinations.length ? (
-                        destinations.map(destCard)
-                      ) : (
-                        <div className="rounded-xl border border-dashed border-border px-5 py-9 text-center">
-                          <Waypoints size={26} className="mx-auto mb-3 text-muted-foreground" />
-                          <p className="text-sm">Find your audience.</p>
-                          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                            Add Twitch, YouTube, Kick, or your own RTMP endpoint.
+                  {view === 'Channels' && (
+                    <section className="surface p-5 flex flex-col">
+                      {panelHeader(
+                        'Destinations',
+                        'One program. Multiple platforms.',
+                        admin && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={active}
+                            aria-label="Add destination"
+                            onClick={() => open('destination')}
+                          >
+                            <Plus size={16} />
+                          </Button>
+                        ),
+                      )}
+                      <div className="space-y-3">
+                        {destinations.length ? (
+                          destinations.map(destCard)
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-border px-5 py-9 text-center">
+                            <Waypoints size={26} className="mx-auto mb-3 text-muted-foreground" />
+                            <p className="text-sm">Find your audience.</p>
+                            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                              Add Twitch, YouTube, Kick, or your own RTMP endpoint.
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-5"
+                              disabled={!admin}
+                              onClick={() => open('destination')}
+                            >
+                              <Plus size={13} />
+                              Add destination
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-auto pt-5">
+                        <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                          <Route size={15} className="shrink-0 text-primary mt-0.5" />
+                          All enabled destinations receive the same program. Each connection retries
+                          independently.
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </div>
+                {view === 'Overview' && (
+                  <div className="flex flex-wrap gap-3 mt-5">
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void showCredentials()}
+                    >
+                      Connection details
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={active || !admin}
+                      onClick={() => open('scene')}
+                    >
+                      BRB scene
+                    </Button>
+                  </div>
+                )}
+                {view === 'Channels' && (
+                  <div className="grid lg:grid-cols-[1fr_1fr] xl:grid-cols-[minmax(0,1fr)_340px] gap-5 mt-5">
+                    <section className="surface p-5">
+                      {panelHeader('Connection & protection', 'Your input, with a safety net.')}
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-border p-4">
+                          <div className="flex items-center justify-between">
+                            <span className="label">INGEST CONNECTION</span>
+                            <ArrowDownToLine size={14} className="text-muted-foreground" />
+                          </div>
+                          <p className="mt-4 text-sm uppercase">{channel.protocol}</p>
+                          <p className="mt-1 font-mono text-[11px] text-muted-foreground truncate">
+                            {server?.host}
                           </p>
                           <Button
                             variant="outline"
                             size="sm"
-                            className="mt-5"
-                            disabled={!admin}
-                            onClick={() => open('destination')}
+                            className="mt-4"
+                            onClick={() => void showCredentials()}
                           >
-                            <Plus size={13} />
-                            Add destination
+                            <Settings2 size={12} />
+                            Connection details
                           </Button>
                         </div>
-                      )}
-                    </div>
-                    <div className="mt-auto pt-5">
-                      <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3 text-[11px] leading-relaxed text-muted-foreground">
-                        <Route size={15} className="shrink-0 text-primary mt-0.5" />
-                        All enabled destinations receive the same program. Each connection retries
-                        independently.
-                      </div>
-                    </div>
-                  </section>
-                </div>
-                <div className="grid lg:grid-cols-[1fr_1fr] xl:grid-cols-[minmax(0,1fr)_340px] gap-5 mt-5">
-                  <section className="surface p-5">
-                    {panelHeader('Connection & protection', 'Your input, with a safety net.')}
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="label">INGEST CONNECTION</span>
-                          <ArrowDownToLine size={14} className="text-muted-foreground" />
-                        </div>
-                        <p className="mt-4 text-sm uppercase">{channel.protocol}</p>
-                        <p className="mt-1 font-mono text-[11px] text-muted-foreground truncate">
-                          {server?.host}
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-4"
-                          onClick={() => void showCredentials()}
-                        >
-                          <Settings2 size={12} />
-                          Connection details
-                        </Button>
-                      </div>
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="label">FALLBACK SCENE</span>
-                          <ShieldCheck size={14} className="text-primary" />
-                        </div>
-                        <p className="mt-4 text-sm truncate">{channel.sceneTitle}</p>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          Auto-end after {channel.graceSeconds}s without input
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-4"
-                          disabled={active}
-                          onClick={() => open('scene')}
-                        >
-                          <Video size={12} />
-                          Edit scene
-                        </Button>
-                      </div>
-                    </div>
-                  </section>
-                  <section className="surface p-5">
-                    {panelHeader('Activity', 'The latest from your channel.')}
-                    <div className="space-y-4 max-h-52 overflow-auto">
-                      {data.events
-                        .filter((e) => e.channelId === channel.id)
-                        .slice(0, 8)
-                        .map((e) => (
-                          <div key={e.id} className="flex gap-3">
-                            <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary/50" />
-                            <div>
-                              <p className="text-xs leading-relaxed">{e.message}</p>
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {new Date(e.createdAt).toLocaleTimeString(display.language, {
-                                  timeZone: display.timezone,
-                                  hour12: display.hour12,
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
-                              </p>
-                            </div>
+                        <div className="rounded-xl border border-border p-4">
+                          <div className="flex items-center justify-between">
+                            <span className="label">FALLBACK SCENE</span>
+                            <ShieldCheck size={14} className="text-primary" />
                           </div>
-                        ))}
-                      {!data.events.some((e) => e.channelId === channel.id) && (
-                        <p className="text-xs leading-relaxed text-muted-foreground py-4">
-                          A quiet control room. Session events will appear here when you go live.
-                        </p>
-                      )}
-                    </div>
-                  </section>
-                </div>
+                          <p className="mt-4 text-sm truncate">{channel.sceneTitle}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Auto-end after {channel.graceSeconds}s without input
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-4"
+                            disabled={active}
+                            onClick={() => open('scene')}
+                          >
+                            <Video size={12} />
+                            Edit scene
+                          </Button>
+                        </div>
+                      </div>
+                    </section>
+                    <section className="surface p-5">
+                      {panelHeader('Activity', 'The latest from your channel.')}
+                      <div className="space-y-4 max-h-52 overflow-auto">
+                        {data.events
+                          .filter((e) => e.channelId === channel.id)
+                          .slice(0, 8)
+                          .map((e) => (
+                            <div key={e.id} className="flex gap-3">
+                              <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary/50" />
+                              <div>
+                                <p className="text-xs leading-relaxed">{e.message}</p>
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  {new Date(e.createdAt).toLocaleTimeString(display.language, {
+                                    timeZone: display.timezone,
+                                    hour12: display.hour12,
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        {!data.events.some((e) => e.channelId === channel.id) && (
+                          <p className="text-xs leading-relaxed text-muted-foreground py-4">
+                            A quiet control room. Session events will appear here when you go live.
+                          </p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                )}
               </>
             )}
           </>
@@ -1374,6 +1497,27 @@ export function Dashboard() {
                     }}
                   >
                     Rotate ingest key
+                  </Button>
+                </div>
+              ) : modal === 'deleteChannel' ? (
+                <div className="flex justify-end gap-3 mt-7">
+                  <Button variant="outline" onClick={() => setModal(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={
+                      busy || !data.channels.some((c) => c.id === selected && canDeleteChannel(c))
+                    }
+                    onClick={async () => {
+                      if (await command({ action: 'deleteChannel', channelId: selected })) {
+                        setModal(null);
+                        setSelected('');
+                        setDetails(false);
+                      }
+                    }}
+                  >
+                    Delete channel
                   </Button>
                 </div>
               ) : modal === 'stop' ? (

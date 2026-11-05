@@ -163,6 +163,9 @@ export async function remoteStore(nodeId: string): Promise<Store> {
     async channel(c, patch) {
       changes.push({
         type: 'channel',
+        receiveKbps: patch.receiveKbps,
+        sendKbps: patch.sendKbps,
+        telemetryAt: patch.telemetryAt?.toISOString(),
         id: c.id,
         sessionId: c.sessionId,
         state: patch.state,

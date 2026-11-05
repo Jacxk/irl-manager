@@ -14,6 +14,9 @@ from gi.repository import Gst, GLib
 Gst.init(None)
 config = json.loads(sys.stdin.readline())
 loop = GLib.MainLoop()
+received_bytes = 0
+previous_bytes = 0
+previous_measurement = time.monotonic()
 last_video = 0.0
 last_audio = 0.0
 stable_since = None
@@ -138,7 +141,16 @@ def connect_input():
     decoder = source.get_by_name('decoder')
     decoder.set_property('uri', config['input'])
     decoder.connect('pad-added', on_pad)
+    def count_packet(_pad, info):
+        global received_bytes
+        buffer = info.get_buffer()
+        if buffer:
+            received_bytes += buffer.get_size()
+        return Gst.PadProbeReturn.OK
+    def watch_pad(_source, pad):
+        pad.add_probe(Gst.PadProbeType.BUFFER, count_packet)
     def setup(_decoder, element):
+        element.connect('pad-added', watch_pad)
         if element.find_property('latency'):
             element.set_property('latency', 200)
         if element.find_property('protocols'):
@@ -164,6 +176,7 @@ def output_message(_bus, msg):
 
 
 def tick():
+    global previous_bytes, previous_measurement
     now = time.monotonic()
     healthy = last_video > 0 and now - last_video < 2
     ready = healthy and stable_since is not None and now - stable_since >= 5
@@ -172,7 +185,9 @@ def tick():
         connect_input()
     elif decoder_pipeline and now - connection_started > 15 and (last_video < connection_started or now - last_video > 8):
         reset_input(decoder_pipeline)
-    emit(type='health', lastFrameAgeMs=int((now - last_video) * 1000) if last_video else None,
+    receive_kbps = round((received_bytes - previous_bytes) * 8 / max(now - previous_measurement, 0.001) / 1000)
+    previous_bytes, previous_measurement = received_bytes, now
+    emit(type='health', receiveKbps=receive_kbps, lastFrameAgeMs=int((now - last_video) * 1000) if last_video else None,
          stableForMs=int((now - stable_since) * 1000) if healthy and stable_since else 0,
          selected='live' if ready and not force_fallback else 'fallback')
     return True
