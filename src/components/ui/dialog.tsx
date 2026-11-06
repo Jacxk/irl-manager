@@ -53,7 +53,7 @@ export function DialogContent({
       >
         {children}
         <DialogPrimitive.Close
-          className="absolute top-5 right-5 rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+          className="absolute top-3 right-3 grid size-10 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
           aria-label="Close dialog"
         >
           <X size={18} />

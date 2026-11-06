@@ -193,7 +193,7 @@ export function MoblinControl({
           <div className="flex flex-wrap items-center gap-3">
             <p className="flex items-center gap-2 text-sm font-medium">
               <Smartphone size={17} />
-              Moblin
+              Moblin remote control
             </p>
             {badge}
           </div>
@@ -218,7 +218,7 @@ export function MoblinControl({
           )}
         </div>
         <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-          {canEdit ? 'Set up Moblin' : 'Moblin details'}
+          {canEdit ? 'Pair remote control' : 'Remote control details'}
         </Button>
       </div>
       {data?.lastError && (
@@ -253,8 +253,8 @@ export function MoblinControl({
               {!data.gatewayReady && (
                 <p role="status" className="text-xs text-muted-foreground">
                   The Moblin gateway is not ready. Ask your instance administrator to start the
-                  gateway and configure its public WebSocket URL in Admin → Moblin. Saving this form
-                  does not deploy the gateway.
+                  gateway and configure its public WebSocket URL from the account menu → Instance
+                  administration → Moblin. Saving this form does not start the gateway.
                 </p>
               )}
               <div className="flex items-center justify-between gap-4 border-y border-border py-4">
@@ -336,7 +336,9 @@ export function MoblinControl({
                     remote chat/event forwarding unless you have a separate assistant for it.
                   </li>
                   <li>
-                    Use this channel’s ingest URL for your Moblin stream. Wait for “Phone connected”
+                    Video is separate. Open Connection details on this channel and paste the video
+                    URL or the separate server and stream ID into Moblin’s stream settings. Wait for
+                    “Phone connected”
                     here. If destination control is checked, the phone’s next Go live / Stop will
                     control the broadcast. The web app’s Go live / End stream controls still work
                     independently.

@@ -22,6 +22,7 @@
     "db:migrate-dev": "tsx scripts/migrate-dev.ts",
     "moblin": "tsx moblin/index.ts",
     "db:migrate-moblin": "tsx scripts/migrate-moblin.ts",
+    "db:migrate-channel-health": "tsx scripts/migrate-channel-health.ts",
     "admin:reset-password": "tsx scripts/reset-admin-password.ts"
   },
   "dependencies": {

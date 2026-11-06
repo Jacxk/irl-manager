@@ -277,9 +277,15 @@ is needed for this resource lifecycle action or read-only telemetry. Existing in
 policies remain in force for broadcast actions.
 
 Use the existing `npm run db:push` workflow to synchronize the database schema.
-Updated workers report receiving packet bitrate and aggregate destination output
-bitrate in kbps. These measurements affect display only, including existing channels;
-they do not change stream routing. Missing, old, or disconnected worker measurements
-show as unavailable. Receiving includes RTP packet overhead; sending counts FLV bytes
-reported by FFmpeg across destination relays. Worker deployment credentials remain
-in the environment.
+An existing database can instead run `npm run db:migrate-channel-health` before
+the updated web and worker start. That adds nullable telemetry columns and does
+not change existing channels, destinations, or routing. Updated workers report
+receiving packet bitrate and aggregate destination output bitrate in kbps. These
+measurements affect display only, including existing channels. Missing, old, or
+disconnected worker measurements show as unavailable. Receiving includes RTP
+packet overhead; sending counts FLV bytes reported by FFmpeg across destination
+relays. Worker deployment credentials remain in the environment.
+
+Connection details list Moblin’s SRT server and stream ID separately. Paste the
+server into Moblin’s URL and the stream ID into Stream ID. The RTMP stream key
+includes its query string; a publisher that encodes that `?` is still accepted.

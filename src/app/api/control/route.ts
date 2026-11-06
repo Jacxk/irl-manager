@@ -136,6 +136,7 @@ export async function POST(request: Request) {
     let channelContext = 'channelId' in cmd ? await requireChannel(cmd.channelId) : null;
     const ctx = channelContext ?? (await access());
     return await db.transaction(async (tx) => {
+      let createdId: string | undefined;
       await lockWorkspaceAccess(tx, ctx);
       if (channelContext) {
         const [current] = await tx
@@ -160,9 +161,11 @@ export async function POST(request: Request) {
       if (
         [
           'createServer',
+          'updateServer',
           'createChannel',
           'deleteChannel',
           'addDestination',
+          'updateDestination',
           'deleteDestination',
           'rotateKey',
           'addMember',
@@ -190,6 +193,19 @@ export async function POST(request: Request) {
             region: cmd.region,
           });
         });
+      } else if (cmd.action === 'updateServer') {
+        const node = await tx.query.mediaServer.findFirst({
+          where: and(
+            eq(mediaServer.id, cmd.serverId),
+            eq(mediaServer.workspaceId, ctx.workspace.id),
+          ),
+        });
+        if (!node) throw new ApiError(404, 'Node not found.');
+        if (node.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
+        await tx
+          .update(mediaServer)
+          .set({ name: cmd.name, host: cmd.host, region: cmd.region })
+          .where(eq(mediaServer.id, node.id));
       } else if (cmd.action === 'deleteChannel') {
         const c = channelContext!.channel;
         if (!canDeleteChannel(c))
@@ -207,8 +223,9 @@ export async function POST(request: Request) {
         });
         if (!server) throw new ApiError(404, 'Node not found.');
         if (server.removalRequestedAt) throw new ApiError(409, 'This node is being removed.');
+        createdId = randomUUID();
         await tx.insert(channel).values({
-          id: randomUUID(),
+          id: createdId,
           workspaceId: ctx.workspace.id,
           serverId: server.id,
           name: cmd.name,
@@ -336,6 +353,22 @@ export async function POST(request: Request) {
             encryptedKey: encrypt(cmd.key),
           });
         }
+        if (cmd.action === 'updateDestination') {
+          if (c.desired === 'running')
+            throw new ApiError(409, 'End this session before editing destinations.');
+          const patch: { name: string; provider: string; url: string; encryptedKey?: string } = {
+            name: cmd.name,
+            provider: cmd.provider,
+            url: cmd.url.replace(/\/$/, ''),
+          };
+          if (cmd.key) patch.encryptedKey = encrypt(cmd.key);
+          const updated = await tx
+            .update(destination)
+            .set(patch)
+            .where(and(eq(destination.id, cmd.destinationId), eq(destination.channelId, c.id)))
+            .returning({ id: destination.id });
+          if (!updated.length) throw new ApiError(404, 'Destination not found.');
+        }
         if (cmd.action === 'toggleDestination')
           await tx
             .update(destination)
@@ -366,7 +399,7 @@ export async function POST(request: Request) {
         if (cmd.action === 'start' || cmd.action === 'stop')
           await changeBroadcast(tx, c, cmd.action);
       }
-      return NextResponse.json({ ok: true });
+      return NextResponse.json(createdId ? { ok: true, channelId: createdId } : { ok: true });
     });
   } catch (error) {
     return fail(error);
