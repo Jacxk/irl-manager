@@ -43,6 +43,14 @@ If startup fails, check Docker is running, `.env` exists, the database URL match
 to the Docker VM when developing alongside streaming and other services. Its command starts
 Next.js directly: it does not push schema changes or create test accounts.
 
+To access the development server from another device, add its address to `.env`, for example
+`NEXT_ALLOWED_DEV_ORIGINS=192.168.68.137`. Use comma-separated hostnames or IP addresses
+without a scheme or port for multiple addresses. Recreate the web container with the Compose
+command below after changing `.env`; restarting it alone does not reload the container environment.
+This only allows Next.js development assets and HMR; authentication still requires a correctly
+configured `BETTER_AUTH_URL` and trusted origin. Allow only addresses you control, and keep the
+development server on a trusted network.
+
 ### Keep the existing stack and data
 
 Use the existing stack's project name and `.env` so its database, encryption keys,
