@@ -35,6 +35,22 @@ try {
   await page.goto(base);
   await page.getByRole('heading', { name: 'Your control room.' }).waitFor();
   await page.getByRole('heading', { name: 'Integration stream', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^Channels/ }).click();
+  await page.getByRole('link', { name: 'Manage Integration stream' }).click();
+  await page.getByRole('link', { name: 'Back to channels' }).waitFor();
+  const managedUrl = page.url();
+  assert.match(managedUrl, /[?&]channel=/);
+  await page.reload();
+  await page.getByRole('heading', { name: 'Integration stream', exact: true }).waitFor();
+  await page.goBack();
+  await page.getByRole('link', { name: 'Manage Integration stream' }).waitFor();
+  await page.goForward();
+  await page.getByRole('link', { name: 'Back to channels' }).waitFor();
+  assert.equal(page.url(), managedUrl);
+  await page.getByRole('link', { name: 'Back to channels' }).click();
+  await page.getByRole('link', { name: 'Manage Integration stream' }).waitFor();
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await page.getByRole('heading', { name: 'Integration stream', exact: true }).waitFor();
   await page.screenshot({
     path: '/tmp/irl-manager-desktop.png',
     fullPage: true,

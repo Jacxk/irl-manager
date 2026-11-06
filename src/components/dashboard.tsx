@@ -187,7 +187,9 @@ export function Dashboard() {
     nav.find((item) => item.name.toLowerCase() === searchParams.get('view'))?.name ?? 'Overview';
   const setView = (next: View) =>
     router.push(next === 'Overview' ? '/' : `/?view=${next.toLowerCase()}`, { scroll: false });
-  const [details, setDetails] = useState(false);
+  const managedChannelId = view === 'Channels' ? searchParams.get('channel') : null;
+  const details = managedChannelId !== null;
+  const channelUrl = (id: string) => `/?view=channels&channel=${encodeURIComponent(id)}`;
   const [selected, setSelected] = useState('');
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState('');
@@ -234,7 +236,9 @@ export function Dashboard() {
       clearInterval(timer);
     };
   }, [reload]);
-  const channel = data?.channels.find((c) => c.id === selected) ?? data?.channels[0];
+  const channel = details
+    ? data?.channels.find((c) => c.id === managedChannelId)
+    : (data?.channels.find((c) => c.id === selected) ?? data?.channels[0]);
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
@@ -725,15 +729,14 @@ export function Dashboard() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelected(c.id);
-                            setDetails(true);
-                          }}
-                        >
-                          Manage
+                        <Button asChild variant="outline" size="sm">
+                          <Link
+                            href={channelUrl(c.id)}
+                            scroll={false}
+                            aria-label={`Manage ${c.name}`}
+                          >
+                            Manage
+                          </Link>
                         </Button>
                         {admin && (
                           <Button
@@ -764,8 +767,10 @@ export function Dashboard() {
           </section>
         )}
         {view === 'Channels' && details && (
-          <Button variant="outline" className="mb-5" onClick={() => setDetails(false)}>
-            Back to channels
+          <Button asChild variant="outline" className="mb-5">
+            <Link href="/?view=channels" scroll={false}>
+              Back to channels
+            </Link>
           </Button>
         )}
         {(view === 'Overview' || (view === 'Channels' && details)) && (
@@ -775,11 +780,15 @@ export function Dashboard() {
                 <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary mb-5">
                   <Radio size={30} />
                 </span>
-                <h2 className="text-xl">Your next adventure starts here.</h2>
+                <h2 className="text-xl">
+                  {details ? 'Channel not found.' : 'Your next adventure starts here.'}
+                </h2>
                 <p className="max-w-md mx-auto text-muted-foreground leading-relaxed mt-3">
-                  {data.servers.length
-                    ? 'Create a channel and connect your favorite streaming destinations. We’ll keep everything in view.'
-                    : 'Connect a node to get started, then create a channel and choose where to broadcast.'}
+                  {details
+                    ? 'This channel may have been deleted or is not available in this workspace.'
+                    : data.servers.length
+                      ? 'Create a channel and connect your favorite streaming destinations. We’ll keep everything in view.'
+                      : 'Connect a node to get started, then create a channel and choose where to broadcast.'}
                 </p>
               </div>
             ) : (
@@ -789,7 +798,8 @@ export function Dashboard() {
                     <button
                       key={c.id}
                       onClick={() => {
-                        setSelected(c.id);
+                        if (details) router.push(channelUrl(c.id), { scroll: false });
+                        else setSelected(c.id);
                         setPreview(null);
                       }}
                       className={cn(
@@ -1513,7 +1523,7 @@ export function Dashboard() {
                       if (await command({ action: 'deleteChannel', channelId: selected })) {
                         setModal(null);
                         setSelected('');
-                        setDetails(false);
+                        router.replace('/?view=channels', { scroll: false });
                       }
                     }}
                   >
