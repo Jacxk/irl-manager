@@ -58,7 +58,7 @@ export default async function RootLayout({
           {process.env.NODE_ENV === 'development' && (
             <div
               role="status"
-              className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-primary bg-background px-4 py-2 text-center text-xs font-semibold text-primary shadow-lg pointer-events-none"
+              className="border-b border-primary/40 bg-background px-4 py-1.5 text-center text-xs font-semibold text-primary"
             >
               Development mode
             </div>

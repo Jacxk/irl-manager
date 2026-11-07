@@ -108,6 +108,54 @@ try {
     where: eq((await import('../src/lib/db/schema')).destination.channelId, channel.id),
   });
   assert.ok(stored && !stored.encryptedKey.includes('stream-one'));
+  await command(
+    outsider.cookie,
+    {
+      action: 'updateServer',
+      serverId: server.id,
+      name: 'Hijack',
+      host: 'evil.example',
+      region: 'X',
+    },
+    404,
+  );
+  await command(owner.cookie, {
+    action: 'updateServer',
+    serverId: server.id,
+    name: `Integration server ${suffix}`,
+    host: 'live.example',
+    region: 'Test',
+  });
+  one = await get(owner.cookie);
+  assert.equal(
+    one.servers.find((s: { id: string }) => s.id === server.id).host,
+    'live.example',
+  );
+  const target = one.destinations[0];
+  const beforeKey = (
+    await db.query.destination.findFirst({
+      where: eq((await import('../src/lib/db/schema')).destination.id, target.id),
+    })
+  )?.encryptedKey;
+  await command(owner.cookie, {
+    action: 'updateDestination',
+    channelId: channel.id,
+    destinationId: target.id,
+    name: 'Sink renamed',
+    provider: 'custom',
+    url: 'rtmp://sink:1935/backup',
+  });
+  one = await get(owner.cookie);
+  const renamed = one.destinations.find((d: { id: string }) => d.id === target.id);
+  assert.equal(renamed.name, 'Sink renamed');
+  assert.equal(renamed.url, 'rtmp://sink:1935/backup');
+  assert.equal(renamed.key, undefined);
+  const afterKey = (
+    await db.query.destination.findFirst({
+      where: eq((await import('../src/lib/db/schema')).destination.id, target.id),
+    })
+  )?.encryptedKey;
+  assert.equal(afterKey, beforeKey);
   await command(owner.cookie, { action: 'start', channelId: channel.id }, 409); // Worker is offline.
   const rejected = await fetch(`${base}/api/control`, {
     method: 'POST',
@@ -155,6 +203,29 @@ try {
   await command(
     outsider.cookie,
     { action: 'createServer', name: 'Forbidden', host: 'localhost', region: 'Test' },
+    403,
+  );
+  await command(
+    outsider.cookie,
+    {
+      action: 'updateServer',
+      serverId: server.id,
+      name: 'Forbidden',
+      host: 'localhost',
+      region: 'Test',
+    },
+    403,
+  );
+  await command(
+    outsider.cookie,
+    {
+      action: 'updateDestination',
+      channelId: channel.id,
+      destinationId: one.destinations[0].id,
+      name: 'Forbidden',
+      provider: 'custom',
+      url: 'rtmp://sink:1935/live',
+    },
     403,
   );
   await command(outsider.cookie, { action: 'rotateKey', channelId: channel.id }, 403);

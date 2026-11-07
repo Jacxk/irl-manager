@@ -1,3 +1,4 @@
+import { publishIdentity } from '@/lib/ingest';
 import { readCommandBody } from '@/lib/request-body';
 import { ApiError } from '@/lib/access';
 import { timingSafeEqual } from 'node:crypto';
@@ -18,14 +19,12 @@ export async function POST(request: Request) {
       equal(String(body.password ?? ''), process.env.MEDIA_WORKER_TOKEN)
     )
       return new Response(null, { status: 200 });
-    if (
-      body.action !== 'publish' ||
-      typeof body.path !== 'string' ||
-      !body.path.startsWith('input_')
-    )
-      return new Response(null, { status: 401 });
-    const found = await db.query.channel.findFirst({ where: eq(channel.id, body.path.slice(6)) });
-    if (!found || body.user !== found.id || !equal(String(body.password ?? ''), found.ingestKey))
+    const publisher = publishIdentity(body);
+    if (!publisher) return new Response(null, { status: 401 });
+    const found = await db.query.channel.findFirst({
+      where: eq(channel.id, publisher.path.slice(6)),
+    });
+    if (!found || publisher.user !== found.id || !equal(publisher.password, found.ingestKey))
       return new Response(null, { status: 401 });
     return new Response(null, { status: 200 });
   } catch (error) {
