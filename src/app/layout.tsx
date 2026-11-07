@@ -28,7 +28,10 @@ export default async function RootLayout({
       data-theme={s.theme}
       data-theme-default={s.theme}
       suppressHydrationWarning
-      style={{ '--primary': s.accentColor } as React.CSSProperties}
+      style={{
+        '--primary': s.accentColor,
+        '--development-banner-height': process.env.NODE_ENV === 'development' ? '28px' : '0px',
+      } as React.CSSProperties}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
@@ -45,6 +48,14 @@ export default async function RootLayout({
             minPasswordLength: s.minPasswordLength,
           }}
         >
+          {process.env.NODE_ENV === 'development' && (
+            <div
+              role="status"
+              className="sticky top-0 z-[60] flex h-[28px] items-center justify-center border-b border-primary/40 bg-background px-4 text-xs font-semibold text-primary"
+            >
+              Development mode
+            </div>
+          )}
           {s.banner && (
             <div role="status" className="bg-primary text-primary-foreground p-3 text-center">
               {s.banner}
@@ -53,14 +64,6 @@ export default async function RootLayout({
           {s.maintenanceNotice && (
             <div role="status" className="bg-muted p-3 text-center">
               {s.maintenanceNotice}
-            </div>
-          )}
-          {process.env.NODE_ENV === 'development' && (
-            <div
-              role="status"
-              className="border-b border-primary/40 bg-background px-4 py-1.5 text-center text-xs font-semibold text-primary"
-            >
-              Development mode
             </div>
           )}
           {children}

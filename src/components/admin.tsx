@@ -241,7 +241,7 @@ export function Admin({ children }: { children: React.ReactNode }) {
       <aside
         aria-label="Administration sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-[232px] flex-col border-r border-border bg-card transition-transform lg:translate-x-0',
+          'fixed bottom-0 left-0 top-[var(--development-banner-height)] z-40 flex w-[232px] flex-col border-r border-border bg-card transition-transform lg:translate-x-0',
           mobile ? 'translate-x-0' : '-translate-x-full',
         )}
       >
