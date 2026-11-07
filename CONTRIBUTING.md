@@ -12,8 +12,14 @@ npm run setup
 docker compose up -d db
 npm run db:push
 npm run db:migrate-admin
-npm run dev
+npm run dev:stack
 ```
+
+For subsequent sessions, run `npm run dev:stack`. It starts PostgreSQL in Docker and runs the Next.js development server, installer, and Moblin gateway on the host. UI and server changes reload without rebuilding the web image. Press Ctrl+C to stop the host processes; the database and installed node containers keep running. To stop PostgreSQL separately, use `docker compose stop db`.
+
+If the Docker web or installer services are already running, stop them first with `docker compose stop web installer moblin` to avoid port conflicts and competing installers. The first-time schema commands above are still required; `dev:stack` does not change the schema automatically. Run migrations when the checkout requires them.
+
+If another checkout or Compose project already hosts your node, use its development `.env` and database volume to see the same node and retain its encryption key. Compose project names determine which database volume is used; set `COMPOSE_PROJECT_NAME` to the existing project name before running the Compose and `dev:stack` commands, or use the original checkout. Do not run `npm run setup` to generate replacement secrets for an existing database. Check `docker compose ps` before stopping services, and do not reuse a production database for development.
 
 Open http://localhost:3000 and choose **Sign in**:
 
@@ -103,9 +109,11 @@ session; after a VM reboot, re-enable it with
 Development `.next` output
 and dependencies live in Docker volumes, separate from host build output.
 
-## Optional node installation
+## Local node for development
 
-The UI and account work without a streaming node. To exercise node provisioning, run `npm run installer` in another terminal, then use **Nodes → Add node**. See [README.md](README.md) for host prerequisites and streaming setup. Provisioning changes infrastructure; use disposable hosts and sample destination keys.
+With `dev:stack` running, use **Nodes → Add node → Install locally**. Choose `localhost` as the ingest address for an encoder on the same machine, or an address reachable from your encoder. The wizard installs a real managed node in Docker; wait for its first heartbeat, then select it when creating a channel. The node remains registered and its containers persist across development server restarts. Instance policies, workspace permissions, and the one-node-per-Docker-host ownership protections still apply. See [README.md](README.md) for prerequisites and troubleshooting. Use sample destination keys.
+
+The first node installation builds its images. Edits to the web app reload automatically, but changes to the installer or Moblin process require restarting `dev:stack`, and changes to the installed node worker or media services require updating/rebuilding that node. Installing a node captures a source bundle at installation time; restarting the web app alone does not update it. Avoid the legacy streaming profile while using a managed local node because the ingest ports overlap.
 
 ## Make a change
 
