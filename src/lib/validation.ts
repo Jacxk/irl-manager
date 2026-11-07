@@ -30,6 +30,16 @@ export const commandSchema = z.discriminatedUnion('action', [
     region: z.string().trim().min(1).max(60),
   }),
   z.object({
+    action: z.literal('updateServer'),
+    serverId: id,
+    name: z.string().trim().min(1).max(80),
+    host: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9.-]+$/, 'Enter a hostname or IPv4 address.'),
+    region: z.string().trim().min(1).max(60),
+  }),
+  z.object({
     action: z.literal('createChannel'),
     name: z.string().trim().min(1).max(80),
     serverId: id,
@@ -53,6 +63,28 @@ export const commandSchema = z.discriminatedUnion('action', [
     .refine((v) => v.provider !== 'youtube' || v.autoStopConfirmed === true, {
       message: 'Enable auto-stop in YouTube Studio and confirm it before adding this destination.',
     }),
+  z
+    .object({
+      action: z.literal('updateDestination'),
+      channelId: id,
+      destinationId: id,
+      name: z.string().trim().min(1).max(80),
+      provider: providerSchema,
+      url: rtmpUrl,
+      autoStopConfirmed: z.boolean().optional(),
+      key: z
+        .string()
+        .trim()
+        .max(1000)
+        .optional()
+        .refine(
+          (v) => !v || !/[\s\x00-\x1f?#]/.test(v),
+          'Stream key contains unsupported characters.',
+        ),
+    })
+    .refine((v) => v.provider !== 'youtube' || v.autoStopConfirmed === true, {
+      message: 'Enable auto-stop in YouTube Studio and confirm it before saving this destination.',
+    }),
   z.object({
     action: z.literal('toggleDestination'),
     channelId: id,
@@ -60,6 +92,7 @@ export const commandSchema = z.discriminatedUnion('action', [
     enabled: z.boolean(),
   }),
   z.object({ action: z.literal('deleteDestination'), channelId: id, destinationId: id }),
+  z.object({ action: z.literal('deleteChannel'), channelId: id }),
   z.object({ action: z.literal('start'), channelId: id }),
   z.object({ action: z.literal('stop'), channelId: id }),
   z.object({ action: z.literal('fallback'), channelId: id, enabled: z.boolean() }),

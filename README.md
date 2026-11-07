@@ -260,3 +260,32 @@ Production builds disable Turbopack’s on-disk build cache, which is discarded 
 Moblin also starts a BRB-protected pre-live preview when the paired phone reports that it is streaming. This does not start destinations, even with destination control off. Input or remote-control loss keeps that preview open through the channel's reconnect window, with BRB on missing frames or sustained low bitrate. An explicit phone Stop closes it; a reconnect after an offline Stop closes it when the phone reports its state. An unpaired raw-input preview cannot distinguish Stop from a network outage.
 
 Admin → Moblin limits protected pre-live programs per node (default 2; 0 disables them). The limit and the existing pre-live preview policy apply immediately to existing requests as well as new ones. Pairing ownership, active account, and workspace administrator permissions are checked before allocating a preview. Queued requests start when capacity becomes available. Run `npm run db:migrate-moblin` to apply both Moblin migrations before updating the web, gateway, and node workers. This reuses authenticated node media transport and needs no additional public port or secret.
+
+### Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development, Docker Compose,
+hot reload, and retaining an existing database.
+
+### Channel management and telemetry
+
+Channels lists every workspace channel. Manage opens the full control room;
+Overview shows preview, receiving/sending health and bitrate, connection details,
+and BRB scene access. Administrators and owners can permanently delete stopped
+channels, including their destinations and activity. A broadcast must finish ending
+before deletion. Existing workspace authorization applies; no new instance setting
+is needed for this resource lifecycle action or read-only telemetry. Existing instance
+policies remain in force for broadcast actions.
+
+Use the existing `npm run db:push` workflow to synchronize the database schema.
+An existing database can instead run `npm run db:migrate-channel-health` before
+the updated web and worker start. That adds nullable telemetry columns and does
+not change existing channels, destinations, or routing. Updated workers report
+receiving packet bitrate and aggregate destination output bitrate in kbps. These
+measurements affect display only, including existing channels. Missing, old, or
+disconnected worker measurements show as unavailable. Receiving includes RTP
+packet overhead; sending counts FLV bytes reported by FFmpeg across destination
+relays. Worker deployment credentials remain in the environment.
+
+Connection details list Moblin’s SRT server and stream ID separately. Paste the
+server into Moblin’s URL and the stream ID into Stream ID. The RTMP stream key
+includes its query string; a publisher that encodes that `?` is still accepted.

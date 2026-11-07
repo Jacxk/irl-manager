@@ -1,0 +1,22 @@
+# Development override for an existing stack; preserves its database and volumes.
+# Set IRL_DEV_SOURCE to the checkout to run when using another project directory.
+services:
+  web:
+    ulimits:
+      core: 0
+    build:
+      context: ${IRL_DEV_SOURCE:-.}
+      target: development
+    environment:
+      NODE_ENV: development
+      MOBLIN_GATEWAY_URL: ${MOBLIN_GATEWAY_URL:-http://moblin:3001}
+      NODE_OPTIONS: --max-old-space-size=1536
+    # Existing databases need neither schema push nor development fixture seeding.
+    command: ['node', 'node_modules/next/dist/bin/next', 'dev', '--hostname', '0.0.0.0']
+    volumes:
+      - ${IRL_DEV_SOURCE:-.}:/app
+      - existing_dev_node_modules:/app/node_modules
+      - existing_dev_next:/app/.next
+volumes:
+  existing_dev_node_modules:
+  existing_dev_next:

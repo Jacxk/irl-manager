@@ -18,7 +18,8 @@ export function validateDevelopmentDatabase(
   const url = new URL(connection);
   if (
     !['postgres:', 'postgresql:'].includes(url.protocol) ||
-    !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ||
+    (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
+      !(url.hostname === 'db' && url.pathname.endsWith('_dev'))) ||
     !(url.pathname === '/irl' || url.pathname.endsWith('_dev'))
   ) {
     throw new Error('Use a dedicated local development database named irl or ending in _dev.');

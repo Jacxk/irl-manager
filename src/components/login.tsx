@@ -58,7 +58,8 @@ export function Login({
         );
         return;
       }
-      router.push('/');
+      const next = new URLSearchParams(window.location.search).get('next');
+      router.push(next?.startsWith('/') && !next.startsWith('//') ? next : '/');
       router.refresh();
     } catch {
       setError('Unable to reach the server. Please try again.');

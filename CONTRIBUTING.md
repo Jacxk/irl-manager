@@ -36,6 +36,73 @@ Production startup (`npm run build && npm start`, including the Docker web servi
 
 If startup fails, check Docker is running, `.env` exists, the database URL matches your local database, and both schema commands above succeeded. Keep `.env`, credentials, and test fixture files out of commits.
 
+## Docker development
+
+`compose.development.yml` overrides `compose.yml` to run the web service with
+`NODE_ENV=development`, source hot reload, and a 1536 MB Node heap limit. Allocate at least 4 GB RAM
+to the Docker VM when developing alongside streaming and other services. Its command starts
+Next.js directly: it does not push schema changes or create test accounts.
+
+To access the development server from another device, add its address to `.env`, for example
+`NEXT_ALLOWED_DEV_ORIGINS=192.168.68.137`. Use comma-separated hostnames or IP addresses
+without a scheme or port for multiple addresses. Recreate the web container with the Compose
+command below after changing `.env`; restarting it alone does not reload the container environment.
+This only allows Next.js development assets and HMR; authentication still requires a correctly
+configured `BETTER_AUTH_URL` and trusted origin. Allow only addresses you control, and keep the
+development server on a trusted network.
+
+### Keep the existing stack and data
+
+Use the existing stack's project name and `.env` so its database, encryption keys,
+and authentication settings stay the same. From that checkout:
+
+```sh
+docker compose -p irl-manager -f compose.yml -f compose.development.yml up -d --build --no-deps web
+```
+
+This rebuilds only the web service. Existing database and installer containers,
+media nodes, and volumes are preserved. Sign in with your existing account.
+Open http://localhost:3000. Do not run `down -v`: it deletes database volumes.
+
+When developing in a worktree while the running stack belongs to another checkout:
+
+```sh
+IRL_DEV_SOURCE="$PWD" docker compose \
+  --project-directory /absolute/path/to/original/checkout \
+  -p irl-manager \
+  -f "$PWD/compose.yml" \
+  -f "$PWD/compose.development.yml" \
+  up -d --build --no-deps web
+```
+
+The original directory supplies `.env`; `IRL_DEV_SOURCE` supplies the source code
+and development image build context. No secrets need copying into the worktree.
+Keep using the same command for subsequent rebuilds. Source changes hot reload;
+rebuild after dependency changes and refresh dependencies with `npm ci` inside the
+web container if its existing dependency volume is stale.
+
+Apply schema changes deliberately using `npm run db:push` against the intended
+local database; the existing-stack override never does this automatically. Take a
+backup before changing schema. The normal host workflow above can seed a test
+administrator, but this override preserves existing accounts without seeding.
+
+### Troubleshooting
+
+Check `docker compose ... logs --tail 100 web` and `docker compose ... ps` using
+the same project and files as startup. If requests fail intermittently, check the
+container restart count and Docker VM memory allocation. Compiler restarts
+can drop requests even when a health check previously passed. Allow the initial
+page compilation to finish, then reload the browser. Crash dumps (`core` and `core.*`) are ignored and disabled in the development
+containers so file discovery does not scan large dumps after a compiler crash.
+On Colima, configure resources with `colima stop` followed by
+`colima start --memory 4` (this temporarily stops all Docker services). The current
+local VM also has a 2 GB swap file at `/var/swap-irl-development` to absorb
+compilation peaks without stopping containers. It is enabled for the current VM
+session; after a VM reboot, re-enable it with
+`colima ssh -- sudo swapon /var/swap-irl-development` if needed.
+Development `.next` output
+and dependencies live in Docker volumes, separate from host build output.
+
 ## Optional node installation
 
 The UI and account work without a streaming node. To exercise node provisioning, run `npm run installer` in another terminal, then use **Nodes → Add node**. See [README.md](README.md) for host prerequisites and streaming setup. Provisioning changes infrastructure; use disposable hosts and sample destination keys.

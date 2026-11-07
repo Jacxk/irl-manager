@@ -13,6 +13,10 @@ if (
   );
 const config: NextConfig = {
   output: 'standalone',
+  allowedDevOrigins: (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   async rewrites() {
     return {
       beforeFiles: [{ source: '/moblin/:path*', destination: `${gateway.origin}/moblin/:path*` }],

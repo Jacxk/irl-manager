@@ -1,6 +1,8 @@
 'use client';
 import { MoblinControl } from './moblin-control';
 import Image from 'next/image';
+import { encoderGuide, type IngestProtocol } from '@/lib/ingest';
+import { canDeleteChannel } from '@/lib/channel-policy';
 import { UserMenu } from './user-menu';
 import { toast } from 'sonner';
 import {
@@ -53,7 +55,18 @@ import { cn } from '@/lib/utils';
 import type { DashboardData, Destination, Server } from '@/lib/types';
 type View = 'Overview' | 'Channels' | 'Destinations' | 'Scenes' | 'Nodes' | 'Team';
 type Modal =
-  'channel' | 'node' | 'destination' | 'scene' | 'credentials' | 'member' | 'stop' | null;
+  | 'channel'
+  | 'node'
+  | 'destination'
+  | 'editDestination'
+  | 'editNode'
+  | 'scene'
+  | 'credentials'
+  | 'deleteDestination'
+  | 'member'
+  | 'stop'
+  | 'deleteChannel'
+  | null;
 const nav: { name: View; icon: LucideIcon }[] = [
   { name: 'Overview', icon: LayoutDashboard },
   { name: 'Channels', icon: Radio },
@@ -69,20 +82,77 @@ const titles: Record<Exclude<Modal, null>, [string, string]> = {
   ],
   node: ['Add a node', 'Add a Linux media node, then configure its worker with the node ID.'],
   destination: ['Add a destination', 'Relay your program to another provider at the same time.'],
-  scene: ['Fallback scene', 'This scene stays live while your connection recovers.'],
+  editDestination: [
+    'Edit destination',
+    'The saved stream key stays in place unless you enter a new one.',
+  ],
+  editNode: [
+    'Edit node host',
+    'This is the address copied into Moblin. It does not install a node or move the worker.',
+  ],
+  scene: ['BRB scene', 'Viewers see this while the connection recovers.'],
   credentials: [
     'Connect your encoder',
-    'Keep these credentials private. Anyone with the key can publish to this channel.',
+    'Keep these credentials private. Anyone with the key can publish to this channel. Copy the URL for this channel’s protocol. Use the separate fields only if Moblin asks for them.',
   ],
   member: [
     'Add a teammate',
     'Your teammate must create an account first. They’ll receive an invitation in their dashboard.',
   ],
+  deleteChannel: [
+    'Delete channel?',
+    'Permanently delete this channel, its destinations, credentials, and activity. Stop the broadcast first.',
+  ],
   stop: [
     'End this broadcast?',
     'Every destination will disconnect. Provider processing may delay the public end; YouTube requires auto-stop enabled. The worker will stop retrying until you start again.',
   ],
+  deleteDestination: [
+    'Remove this destination?',
+    'The relay stops using it. This does not delete the broadcast on the provider.',
+  ],
 };
+function CopyValue({
+  label,
+  value,
+  hint,
+  secret,
+  revealed,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  secret?: boolean;
+  revealed?: boolean;
+  onCopy: (value: string) => void;
+}) {
+  const id = `connection-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const shown = !secret || revealed ? value : '•'.repeat(Math.min(value.length, 24));
+  return (
+    <div className="space-y-2 border-b border-border pb-4">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={id} className="text-sm text-foreground">
+          {label}
+        </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`Copy ${label}`}
+          onClick={() => onCopy(value)}
+        >
+          <Clipboard size={14} />
+          Copy
+        </Button>
+      </div>
+      <p id={id} className="font-mono text-[11px] leading-relaxed break-all select-all">
+        {shown}
+      </p>
+      {hint && <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
 function Status({ state }: { state: string }) {
   const active = ['live', 'connected', 'online'].includes(state);
   const warn = [
@@ -174,6 +244,9 @@ export function Dashboard() {
     nav.find((item) => item.name.toLowerCase() === searchParams.get('view'))?.name ?? 'Overview';
   const setView = (next: View) =>
     router.push(next === 'Overview' ? '/' : `/?view=${next.toLowerCase()}`, { scroll: false });
+  const managedChannelId = view === 'Channels' ? searchParams.get('channel') : null;
+  const details = managedChannelId !== null;
+  const channelUrl = (id: string) => `/?view=channels&channel=${encodeURIComponent(id)}`;
   const [selected, setSelected] = useState('');
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState('');
@@ -194,10 +267,17 @@ export function Dashboard() {
     key: string;
   } | null>(null);
   const [provider, setProvider] = useState('twitch');
+  const [ingestProtocol, setIngestProtocol] = useState<IngestProtocol>('srtla');
+  const [revealSecrets, setRevealSecrets] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  const [pendingDestination, setPendingDestination] = useState<Destination | null>(null);
+  const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
+  const [pendingServer, setPendingServer] = useState<Server | null>(null);
   const reload = useCallback(async () => {
     const res = await fetch('/api/control', { cache: 'no-store' });
     if (res.status === 401) {
-      router.push('/login');
+      const next = `${window.location.pathname}${window.location.search}`;
+      router.push(`/login?next=${encodeURIComponent(next)}`);
       router.refresh();
       return;
     }
@@ -220,7 +300,9 @@ export function Dashboard() {
       clearInterval(timer);
     };
   }, [reload]);
-  const channel = data?.channels.find((c) => c.id === selected) ?? data?.channels[0];
+  const channel = details
+    ? data?.channels.find((c) => c.id === managedChannelId)
+    : (data?.channels.find((c) => c.id === selected) ?? data?.channels[0]);
   const destinations = data?.destinations.filter((d) => d.channelId === channel?.id) ?? [];
   const server = data?.servers.find((s) => s.id === channel?.serverId);
   const active = channel?.desired === 'running';
@@ -233,8 +315,10 @@ export function Dashboard() {
     inputStatus?.channelId === previewChannelId && inputStatus?.connected === true;
   const protectedPreview = !active && !!channel?.previewSessionId;
   const preview = previewWanted && (active || protectedPreview || inputConnected);
+  const nodeOnline =
+    !!server?.heartbeatAt && now - new Date(server.heartbeatAt).getTime() < 15000;
   useEffect(() => {
-    if (!previewChannelId || !previewAllowed) return;
+    if (!previewChannelId || !previewAllowed || !nodeOnline) return;
     const controller = new AbortController();
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -258,7 +342,7 @@ export function Dashboard() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [previewChannelId, previewAllowed]);
+  }, [previewChannelId, previewAllowed, nodeOnline]);
   const admin = data?.role !== 'operator';
   const installations = useNodeInstallations(!!data && admin);
   const nodeJobs = new Map(installations.jobs.map((job) => [job.nodeId, job]));
@@ -284,7 +368,10 @@ export function Dashboard() {
         );
       if (payload.action === 'toggleDestination')
         toast.success(payload.enabled ? 'Destination enabled.' : 'Destination disabled.');
+      if (payload.action === 'deleteChannel') toast.success('Channel deleted.');
       if (payload.action === 'deleteDestination') toast.success('Destination removed.');
+      if (payload.action === 'updateDestination') toast.success('Destination saved.');
+      if (payload.action === 'updateServer') toast.success('Node host saved.');
       if (payload.action === 'removeMember') toast.success('Teammate removed.');
       if (payload.action === 'acceptInvitation') toast.success('Workspace joined.');
       if (payload.action === 'declineInvitation') toast.info('Invitation declined.');
@@ -312,8 +399,12 @@ export function Dashboard() {
       );
     setModal(value);
   }
-  async function showCredentials() {
-    const result = await command({ action: 'credentials', channelId: channel?.id });
+  async function showCredentials(channelId = channel?.id) {
+    const preferred = data?.channels.find((c) => c.id === channelId)?.protocol;
+    setIngestProtocol(preferred === 'srt' || preferred === 'rtmp' ? preferred : 'srtla');
+    setRevealSecrets(false);
+    setConfirmRotate(false);
+    const result = await command({ action: 'credentials', channelId });
     if (result) {
       setCredentials(result);
       open('credentials');
@@ -324,12 +415,27 @@ export function Dashboard() {
     const values = Object.fromEntries(new FormData(e.currentTarget));
     let payload: Record<string, unknown> = {};
     if (modal === 'channel') payload = { action: 'createChannel', ...values };
-    if (modal === 'destination')
+    if (modal === 'destination' || modal === 'editDestination') {
+      const key = String(values.key || '').trim();
       payload = {
-        action: 'addDestination',
-        channelId: channel?.id,
-        ...values,
+        action: modal === 'editDestination' ? 'updateDestination' : 'addDestination',
+        channelId:
+          modal === 'editDestination' ? editingDestination?.channelId : values.channelId || channel?.id,
+        destinationId: editingDestination?.id,
+        name: values.name,
+        provider: values.provider,
+        url: values.url,
         autoStopConfirmed: values.autoStopConfirmed === 'on',
+        ...(key ? { key } : {}),
+      };
+    }
+    if (modal === 'editNode')
+      payload = {
+        action: 'updateServer',
+        serverId: pendingServer?.id,
+        name: values.name,
+        host: values.host,
+        region: values.region,
       };
     if (modal === 'scene')
       payload = {
@@ -339,7 +445,15 @@ export function Dashboard() {
         graceSeconds: Number(values.graceSeconds),
       };
     if (modal === 'member') payload = { action: 'addMember', ...values };
-    if (await command(payload)) {
+    const result = await command(payload);
+    if (result) {
+      if (payload.action === 'createChannel' && typeof result.channelId === 'string') {
+        setSelected(result.channelId);
+        router.replace(channelUrl(result.channelId), { scroll: false });
+        toast.success('Channel created. Copy these fields into Moblin.');
+        await showCredentials(result.channelId);
+        return;
+      }
       setModal(null);
       toast.success(
         modal === 'member'
@@ -384,20 +498,35 @@ export function Dashboard() {
     </div>
   );
   const destCard = (d: Destination) => (
-    <div
+      <div
       key={d.id}
-      className="flex items-center gap-3 rounded-xl border border-border bg-background/30 p-4"
+      className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/30 p-4"
     >
       <Provider provider={d.provider} />
-      <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium truncate">{d.name}</span>
+          {admin ? (
+            <button
+              type="button"
+              className="min-h-10 font-medium truncate text-left hover:text-primary"
+              onClick={() => {
+                setProvider(d.provider);
+                setEditingDestination(d);
+                open('editDestination');
+              }}
+            >
+              {d.name}
+            </button>
+          ) : (
+            <span className="font-medium truncate">{d.name}</span>
+          )}
           <Status state={d.enabled ? d.status : 'disabled'} />
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground capitalize">
           {d.provider === 'custom' ? 'Custom RTMP' : d.provider}
           {d.retries > 0 ? ` · ${d.retries} retries` : ''}
         </p>
+        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{d.url}</p>
         {d.lastError && <p className="mt-1 text-xs text-destructive">{d.lastError}</p>}
       </div>
       <Switch
@@ -418,13 +547,10 @@ export function Dashboard() {
           variant="ghost"
           size="icon"
           aria-label={`Remove ${d.name}`}
-          onClick={() =>
-            void command({
-              action: 'deleteDestination',
-              channelId: d.channelId,
-              destinationId: d.id,
-            })
-          }
+          onClick={() => {
+            setPendingDestination(d);
+            open('deleteDestination');
+          }}
         >
           <Trash2 size={14} />
         </Button>
@@ -515,8 +641,8 @@ export function Dashboard() {
       <header className="h-[70px] border-b border-border flex items-center justify-between px-5 md:px-9">
         <div className="flex items-center gap-3">
           <button
-            className="lg:hidden text-muted-foreground"
             aria-label="Open navigation"
+            className="lg:hidden grid size-11 place-items-center text-muted-foreground"
             onClick={() => setMobile(true)}
           >
             <Menu size={20} />
@@ -537,7 +663,11 @@ export function Dashboard() {
             />
             {data.servers.some((s) => online(s.heartbeatAt))
               ? 'Node connected'
-              : 'No nodes connected'}
+              : data.servers.length === 1
+                ? `${data.servers[0]?.name} is offline`
+                : data.servers.length
+                  ? 'Nodes offline'
+                  : 'No nodes connected'}
           </span>
           <Button
             variant="ghost"
@@ -553,30 +683,18 @@ export function Dashboard() {
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="label mb-2">YOUR STREAM, EVERYWHERE</p>
-            <h1 className="text-[29px] font-medium tracking-tight">
-              {view === 'Overview'
-                ? 'Your control room.'
-                : view === 'Channels'
-                  ? 'Every stream starts here.'
-                  : view === 'Destinations'
-                    ? 'One stream. Every audience.'
-                    : view === 'Scenes'
-                      ? 'Stay present. Even offline.'
-                      : view === 'Nodes'
-                        ? 'The engine behind your stream.'
-                        : 'Better, together.'}
-            </h1>
+            <h1 className="text-[29px] font-medium tracking-tight">{view}</h1>
             <p className="mt-2 text-[13px] text-muted-foreground">
               {view === 'Overview'
-                ? 'A clear view of everything between you and your audience.'
+                ? 'Node, Moblin, destination, then go live.'
                 : view === 'Channels'
-                  ? 'Manage your ingest connections and broadcast sessions.'
+                  ? 'Manage ingest, health, and the broadcast.'
                   : view === 'Destinations'
-                    ? 'Send your program to multiple platforms simultaneously.'
+                    ? 'Send the program to more than one platform.'
                     : view === 'Scenes'
-                      ? 'Custom scenes for the moments between connections.'
+                      ? 'The BRB scene viewers see while the connection recovers.'
                       : view === 'Nodes'
-                        ? 'Register media nodes and monitor worker availability.'
+                        ? 'Media nodes that receive Moblin and relay the program.'
                         : 'Give your crew a seat in the control room.'}
             </p>
           </div>
@@ -597,7 +715,7 @@ export function Dashboard() {
               }
               disabled={
                 ((view === 'Destinations' || view === 'Scenes') && (!channel || active)) ||
-                ((view === 'Overview' || view === 'Channels') && !data.servers.length)
+                ((view === 'Overview' || (view === 'Channels' && details)) && !data.servers.length)
               }
             >
               <Plus size={15} />
@@ -657,83 +775,197 @@ export function Dashboard() {
             </button>
           </div>
         )}
-        {view !== 'Nodes' && !data.servers.some((node) => online(node.heartbeatAt)) && (
+        {!data.servers.some((node) => online(node.heartbeatAt)) && (
           <div
             role="alert"
             className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm"
           >
             <ServerIcon size={18} className="shrink-0 text-amber-300" />
             <p className="flex-1 text-muted-foreground">
-              <span className="font-medium text-foreground">No nodes connected.</span>{' '}
+              <span className="font-medium text-foreground">
+                {data.servers.length === 1
+                  ? `${data.servers[0]?.name} is offline.`
+                  : data.servers.length
+                    ? 'Nodes are offline.'
+                    : 'No nodes connected.'}
+              </span>{' '}
               {data.servers.length
-                ? 'Connect an existing node or add a new one to receive and relay streams.'
+                ? 'The worker has not checked in. Open the node for its host and last status before a phone can publish.'
                 : 'Add a node to receive and relay streams.'}
             </p>
-            <Link
-              href="/?view=nodes"
-              className="inline-flex items-center gap-1 text-primary underline underline-offset-4"
-            >
-              {admin ? 'Set up a node' : 'View nodes'}
-              <ArrowUpRight size={14} />
-            </Link>
+            {view === 'Nodes' && admin && data.servers[0] ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPendingServer(
+                    data.servers.find((node) => !online(node.heartbeatAt)) ?? data.servers[0],
+                  );
+                  open('editNode');
+                }}
+              >
+                Edit node host
+              </Button>
+            ) : view !== 'Nodes' ? (
+              <Link
+                href="/?view=nodes"
+                className="inline-flex min-h-10 items-center gap-1 text-primary underline underline-offset-4"
+              >
+                {data.servers.length ? 'Check the node' : admin ? 'Set up a node' : 'View nodes'}
+                <ArrowUpRight size={14} />
+              </Link>
+            ) : null}
           </div>
         )}
-        {view === 'Overview' && (
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-8">
-            {[
-              {
-                label: 'ACTIVE CHANNELS',
-                value: data.channels.filter((c) => c.desired === 'running').length,
-                detail: `${data.channels.length} channels in your workspace`,
-                icon: Radio,
-              },
-              {
-                label: 'LIVE DESTINATIONS',
-                value: data.destinations.filter((d) => d.status === 'connected').length,
-                detail: `${data.destinations.filter((d) => d.enabled).length} destinations enabled`,
-                icon: Waypoints,
-              },
-              {
-                label: 'FALLBACK PROTECTION',
-                value: data.channels.filter((c) => c.state === 'fallback').length
-                  ? 'Active'
-                  : 'Ready',
-                detail: 'Automatic scene switching',
-                icon: ShieldCheck,
-              },
-              {
-                label: 'MEDIA NODES',
-                value: `${data.servers.filter((s) => online(s.heartbeatAt)).length} / ${data.servers.length}`,
-                detail: 'Nodes currently connected',
-                icon: ServerIcon,
-              },
-            ].map((stat) => (
-              <div className="surface p-4 md:p-5" key={stat.label}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="label text-[9px]">{stat.label}</span>
-                  <stat.icon size={15} className="text-muted-foreground" />
+        {view === 'Channels' && !details && (
+          <section className="surface overflow-x-auto">
+            <div className="divide-y divide-border md:hidden">
+              {data.channels.map((c) => (
+                <div key={c.id} className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link href={channelUrl(c.id)} className="text-sm font-medium hover:text-primary">
+                        {c.name}
+                      </Link>
+                      <p className="mt-1 text-xs uppercase text-muted-foreground">{c.protocol}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {data.servers.find((s) => s.id === c.serverId)?.name ?? 'No node'} ·{' '}
+                        {data.destinations.filter((d) => d.channelId === c.id).length} destinations
+                      </p>
+                    </div>
+                    <Status
+                      state={
+                        online(data.servers.find((s) => s.id === c.serverId)?.heartbeatAt ?? null)
+                          ? c.state
+                          : 'offline'
+                      }
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button asChild variant="outline" className="flex-1">
+                      <Link href={channelUrl(c.id)} scroll={false} aria-label={`Manage ${c.name}`}>
+                        Manage
+                      </Link>
+                    </Button>
+                    {admin && (
+                      <Button
+                        variant="destructive"
+                        disabled={busy || !canDeleteChannel(c)}
+                        onClick={() => {
+                          setSelected(c.id);
+                          open('deleteChannel');
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <p className="mt-4 mb-2 text-[28px] leading-none font-medium tracking-tight">
-                  {stat.value}
+              ))}
+              {!data.channels.length && (
+                <p className="p-8 text-center text-sm text-muted-foreground">
+                  No channels yet. Create a channel to get started.
                 </p>
-                <p className="text-[11px] text-muted-foreground">{stat.detail}</p>
-              </div>
-            ))}
-          </div>
+              )}
+            </div>
+            <div className="hidden md:block">
+            <Table aria-label="Channels">
+              <TableHeader>
+                <TableRow>
+                  {['Channel', 'Node', 'Health', 'Destinations', 'Actions'].map((h) => (
+                    <TableHead key={h}>{h}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.channels.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>
+                      {c.name}
+                      <p className="text-xs text-muted-foreground uppercase mt-1">{c.protocol}</p>
+                    </TableCell>
+                    <TableCell>{data.servers.find((s) => s.id === c.serverId)?.name}</TableCell>
+                    <TableCell>
+                      <Status
+                        state={
+                          online(data.servers.find((s) => s.id === c.serverId)?.heartbeatAt ?? null)
+                            ? c.state
+                            : 'offline'
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {data.destinations.filter((d) => d.channelId === c.id).length}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button asChild variant="outline" size="sm">
+                          <Link
+                            href={channelUrl(c.id)}
+                            scroll={false}
+                            aria-label={`Manage ${c.name}`}
+                          >
+                            Manage
+                          </Link>
+                        </Button>
+                        {admin && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={busy || !canDeleteChannel(c)}
+                            onClick={() => {
+                              setSelected(c.id);
+                              open('deleteChannel');
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!data.channels.length && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No channels yet. Create a channel to get started.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            </div>
+          </section>
         )}
-        {(view === 'Overview' || view === 'Channels') && (
+        {view === 'Channels' && details && (
+          <Button asChild variant="outline" className="mb-5">
+            <Link href="/?view=channels" scroll={false}>
+              Back to channels
+            </Link>
+          </Button>
+        )}
+        {(view === 'Overview' || (view === 'Channels' && details)) && (
           <>
             {!channel ? (
               <div className="surface dot-grid p-12 md:p-20 text-center">
                 <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary mb-5">
                   <Radio size={30} />
                 </span>
-                <h2 className="text-xl">Your next adventure starts here.</h2>
+                <h2 className="text-xl">
+                  {details ? 'Channel not found.' : 'Create a channel'}
+                </h2>
                 <p className="max-w-md mx-auto text-muted-foreground leading-relaxed mt-3">
-                  {data.servers.length
-                    ? 'Create a channel and connect your favorite streaming destinations. We’ll keep everything in view.'
-                    : 'Connect a node to get started, then create a channel and choose where to broadcast.'}
+                  {details
+                    ? 'This channel may have been deleted or is not available in this workspace.'
+                    : data.servers.length
+                      ? 'A channel is the Moblin connection and the program you send to destinations.'
+                      : 'Connect a node first, then create a channel and choose where to broadcast.'}
                 </p>
+                {!details && admin && (
+                  <Button className="mt-6" onClick={() => open(data.servers.length ? 'channel' : 'node')}>
+                    {data.servers.length ? 'Create channel' : 'Set up a node'}
+                  </Button>
+                )}
               </div>
             ) : (
               <>
@@ -742,7 +974,8 @@ export function Dashboard() {
                     <button
                       key={c.id}
                       onClick={() => {
-                        setSelected(c.id);
+                        if (details) router.push(channelUrl(c.id), { scroll: false });
+                        else setSelected(c.id);
                         setPreview(null);
                       }}
                       className={cn(
@@ -763,18 +996,53 @@ export function Dashboard() {
                     </button>
                   ))}
                 </div>
-                <div className="grid xl:grid-cols-[minmax(0,1fr)_340px] gap-5">
+                {view === 'Overview' && (
+                  <ol className="mb-5 grid gap-2 text-xs sm:grid-cols-5">
+                    {[
+                      ['Node online', nodeOnline],
+                      ['Channel', true],
+                      ['Moblin connected', inputConnected],
+                      ['Destination', destinations.some((d) => d.enabled)],
+                      ['Live', active],
+                    ].map(([label, done], index) => (
+                      <li
+                        key={String(label)}
+                        className="rounded-lg border border-border px-3 py-2 text-muted-foreground"
+                      >
+                        <span className="text-foreground">
+                          {index + 1}. {label}
+                        </span>
+                        <span className="mt-1 block">{done ? 'Done' : 'Not yet'}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                <div
+                  className={cn(
+                    'grid gap-5',
+                    (view === 'Channels' || view === 'Overview') &&
+                      'xl:grid-cols-[minmax(0,1fr)_340px]',
+                  )}
+                >
                   <section className="surface overflow-hidden">
                     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-border">
                       <div className="flex items-center gap-3">
                         <h2 className="text-sm font-medium">{channel.name}</h2>
                         <Status state={channel.state} />
                       </div>
+                      <Button size="sm" onClick={() => void showCredentials()}>
+                        Connect encoder
+                      </Button>
                       <span className="font-mono text-[10px] text-muted-foreground uppercase">
                         {channel.protocol} / {active ? 'PROGRAM OUTPUT' : 'INCOMING STREAM'}
                       </span>
                     </div>
-                    <div className="relative aspect-video min-h-[230px] overflow-hidden dot-grid bg-[#0c100d]">
+                    <div
+                      className={cn(
+                        'relative overflow-hidden dot-grid bg-[#0c100d]',
+                        preview ? 'aspect-video' : 'min-h-40',
+                      )}
+                    >
                       {preview ? (
                         <Preview
                           key={`${channel.id}:${active ? channel.sessionId : protectedPreview ? channel.previewSessionId : 'input'}`}
@@ -788,20 +1056,34 @@ export function Dashboard() {
                             <Radio size={27} />
                             <span className="absolute -inset-4 rounded-full border border-primary/5" />
                           </div>
-                          <h3 className="text-2xl font-medium tracking-tight">
-                            {!previewAllowed
-                              ? 'Preview unavailable'
-                              : inputConnected || active || protectedPreview
-                                ? 'Preview is paused.'
-                                : 'No incoming stream'}
+                          <h3 className="text-xl font-medium tracking-tight">
+                            {!nodeOnline
+                              ? `${server?.name ?? 'The node'} is offline`
+                              : !previewAllowed
+                                ? 'Preview unavailable'
+                                : inputConnected || active || protectedPreview
+                                  ? 'Preview is paused.'
+                                  : 'No incoming stream'}
                           </h3>
                           <p className="max-w-sm mt-3 text-xs leading-relaxed text-muted-foreground">
-                            {!previewAllowed
-                              ? 'Input preview is disabled by instance policy.'
-                              : !inputConnected && !active && !protectedPreview
-                                ? 'Start streaming from your encoder. Preview opens automatically when video arrives.'
-                                : 'Turn on preview to watch the incoming stream.'}
+                            {!nodeOnline
+                              ? 'Reconnect this node before Moblin can send video.'
+                              : !previewAllowed
+                                ? 'Input preview is disabled by instance policy.'
+                                : !inputConnected && !active && !protectedPreview
+                                  ? 'Copy the connection details into Moblin. Preview opens when video arrives.'
+                                  : 'Turn on preview to watch the incoming stream.'}
                           </p>
+                          {nodeOnline && !inputConnected && !active && !protectedPreview && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-4"
+                              onClick={() => void showCredentials()}
+                            >
+                              Connect encoder
+                            </Button>
+                          )}
                           {(active || protectedPreview || inputConnected) && previewAllowed && (
                             <Button
                               variant="outline"
@@ -832,6 +1114,61 @@ export function Dashboard() {
                           <EyeOff size={14} />
                         </button>
                       )}
+                    </div>
+                    <div
+                      className="flex flex-wrap gap-6 p-4 border-t border-border text-xs"
+                      aria-label="Stream health"
+                    >
+                      <div>
+                        Receiving ·{' '}
+                        <Status
+                          state={
+                            !online(server?.heartbeatAt ?? null)
+                              ? 'offline'
+                              : channel.state === 'live'
+                                ? 'live'
+                                : channel.state
+                          }
+                        />
+                        <p className="mt-2 text-muted-foreground">
+                          {active &&
+                          online(server?.heartbeatAt ?? null) &&
+                          channel.telemetryAt &&
+                          now - new Date(channel.telemetryAt).getTime() < 15000 &&
+                          channel.receiveKbps !== null
+                            ? `${channel.receiveKbps} kbps`
+                            : !online(server?.heartbeatAt ?? null)
+                              ? `${server?.name ?? 'Node'} is offline`
+                              : active
+                                ? 'Waiting for Moblin'
+                                : 'Starts when you go live'}
+                        </p>
+                      </div>
+                      <div>
+                        Sending ·{' '}
+                        <Status
+                          state={
+                            !online(server?.heartbeatAt ?? null)
+                              ? 'offline'
+                              : destinations.some((d) => d.enabled && d.status === 'retrying')
+                                ? 'retrying'
+                                : destinations.some((d) => d.enabled && d.status === 'connected')
+                                  ? 'connected'
+                                  : 'idle'
+                          }
+                        />
+                        <p className="mt-2 text-muted-foreground">
+                          {active &&
+                          online(server?.heartbeatAt ?? null) &&
+                          channel.telemetryAt &&
+                          now - new Date(channel.telemetryAt).getTime() < 15000 &&
+                          channel.sendKbps !== null
+                            ? `${channel.sendKbps} kbps total`
+                            : !online(server?.heartbeatAt ?? null)
+                              ? `${server?.name ?? 'Node'} is offline`
+                              : 'Starts when you go live'}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-border">
                       <div className="flex gap-4 text-[11px] text-muted-foreground">
@@ -877,6 +1214,7 @@ export function Dashboard() {
                           size="sm"
                           variant="outline"
                           disabled={!active || busy}
+                          title={active ? undefined : 'Available after you go live'}
                           onClick={() =>
                             void command({
                               action: 'fallback',
@@ -886,12 +1224,14 @@ export function Dashboard() {
                           }
                         >
                           <ShieldCheck size={13} />
-                          {channel.manualFallback ? 'Resume auto' : 'Use fallback'}
+                          {channel.manualFallback ? 'Resume auto' : 'Show BRB'}
                         </Button>
                         <Button
                           size="sm"
                           variant={active ? 'destructive' : 'default'}
-                          disabled={busy || channel.state === 'ending'}
+                          disabled={
+                            busy || channel.state === 'ending' || (!active && !nodeOnline)
+                          }
                           onClick={() =>
                             active
                               ? open('stop')
@@ -902,6 +1242,13 @@ export function Dashboard() {
                           {active ? 'End stream' : 'Go live'}
                         </Button>
                       </div>
+                      {!active && (
+                        <p className="basis-full text-[11px] text-muted-foreground">
+                          {nodeOnline
+                            ? 'Show BRB turns on after you go live. You can go live before Moblin connects and before you add a destination.'
+                            : `Go live stays off until ${server?.name ?? 'the node'} is online.`}
+                        </p>
+                      )}
                     </div>
                     <div className="border-t border-border p-4">
                       <MoblinControl
@@ -913,135 +1260,150 @@ export function Dashboard() {
                       />
                     </div>
                   </section>
-                  <section className="surface p-5 flex flex-col">
-                    {panelHeader(
-                      'Destinations',
-                      'One program. Multiple platforms.',
-                      admin && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          disabled={active}
-                          aria-label="Add destination"
-                          onClick={() => open('destination')}
-                        >
-                          <Plus size={16} />
-                        </Button>
-                      ),
-                    )}
-                    <div className="space-y-3">
-                      {destinations.length ? (
-                        destinations.map(destCard)
-                      ) : (
-                        <div className="rounded-xl border border-dashed border-border px-5 py-9 text-center">
-                          <Waypoints size={26} className="mx-auto mb-3 text-muted-foreground" />
-                          <p className="text-sm">Find your audience.</p>
-                          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                            Add Twitch, YouTube, Kick, or your own RTMP endpoint.
+                  {(view === 'Channels' || view === 'Overview') && (
+                    <section className="surface p-4 sm:p-5 flex flex-col">
+                      {panelHeader(
+                        'Destinations',
+                        'One program. Multiple platforms.',
+                        admin && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={active}
+                            aria-label="Add destination"
+                            onClick={() => open('destination')}
+                          >
+                            <Plus size={16} />
+                          </Button>
+                        ),
+                      )}
+                      <div className="space-y-3">
+                        {destinations.length ? (
+                          destinations.map(destCard)
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-border px-5 py-9 text-center">
+                            <Waypoints size={26} className="mx-auto mb-3 text-muted-foreground" />
+                            <p className="text-sm">Find your audience.</p>
+                            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                              Add Twitch, YouTube, Kick, or your own RTMP endpoint.
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-5"
+                              disabled={!admin}
+                              onClick={() => open('destination')}
+                            >
+                              <Plus size={13} />
+                              Add destination
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-auto pt-5">
+                        <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                          <Route size={15} className="shrink-0 text-primary mt-0.5" />
+                          All enabled destinations receive the same program. Each connection retries
+                          independently.
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </div>
+                {view === 'Overview' && (
+                  <div className="flex flex-wrap gap-3 mt-5">
+                    <Button
+                      variant="outline"
+                      disabled={active || !admin}
+                      onClick={() => open('scene')}
+                    >
+                      Edit BRB for {channel.name}
+                    </Button>
+                  </div>
+                )}
+                {view === 'Channels' && (
+                  <div className="grid lg:grid-cols-[1fr_1fr] xl:grid-cols-[minmax(0,1fr)_340px] gap-5 mt-5">
+                    <section className="surface p-5">
+                      {panelHeader('Connection & protection', 'Your input, with a safety net.')}
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-border p-4">
+                          <div className="flex items-center justify-between">
+                            <span className="label">INGEST CONNECTION</span>
+                            <ArrowDownToLine size={14} className="text-muted-foreground" />
+                          </div>
+                          <p className="mt-4 text-sm uppercase">{channel.protocol}</p>
+                          <p className="mt-1 font-mono text-[11px] text-muted-foreground truncate">
+                            {server?.host}
                           </p>
                           <Button
                             variant="outline"
                             size="sm"
-                            className="mt-5"
-                            disabled={!admin}
-                            onClick={() => open('destination')}
+                            className="mt-4"
+                            onClick={() => void showCredentials()}
                           >
-                            <Plus size={13} />
-                            Add destination
+                            <Settings2 size={12} />
+                            Connection details
                           </Button>
                         </div>
-                      )}
-                    </div>
-                    <div className="mt-auto pt-5">
-                      <div className="flex items-start gap-2 rounded-lg bg-primary/5 p-3 text-[11px] leading-relaxed text-muted-foreground">
-                        <Route size={15} className="shrink-0 text-primary mt-0.5" />
-                        All enabled destinations receive the same program. Each connection retries
-                        independently.
-                      </div>
-                    </div>
-                  </section>
-                </div>
-                <div className="grid lg:grid-cols-[1fr_1fr] xl:grid-cols-[minmax(0,1fr)_340px] gap-5 mt-5">
-                  <section className="surface p-5">
-                    {panelHeader('Connection & protection', 'Your input, with a safety net.')}
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="label">INGEST CONNECTION</span>
-                          <ArrowDownToLine size={14} className="text-muted-foreground" />
-                        </div>
-                        <p className="mt-4 text-sm uppercase">{channel.protocol}</p>
-                        <p className="mt-1 font-mono text-[11px] text-muted-foreground truncate">
-                          {server?.host}
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-4"
-                          onClick={() => void showCredentials()}
-                        >
-                          <Settings2 size={12} />
-                          Connection details
-                        </Button>
-                      </div>
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="label">FALLBACK SCENE</span>
-                          <ShieldCheck size={14} className="text-primary" />
-                        </div>
-                        <p className="mt-4 text-sm truncate">{channel.sceneTitle}</p>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                          Auto-end after {channel.graceSeconds}s without input
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-4"
-                          disabled={active}
-                          onClick={() => open('scene')}
-                        >
-                          <Video size={12} />
-                          Edit scene
-                        </Button>
-                      </div>
-                    </div>
-                  </section>
-                  <section className="surface p-5">
-                    {panelHeader('Activity', 'The latest from your channel.')}
-                    <div className="space-y-4 max-h-52 overflow-auto">
-                      {data.events
-                        .filter((e) => e.channelId === channel.id)
-                        .slice(0, 8)
-                        .map((e) => (
-                          <div key={e.id} className="flex gap-3">
-                            <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary/50" />
-                            <div>
-                              <p className="text-xs leading-relaxed">{e.message}</p>
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {new Date(e.createdAt).toLocaleTimeString(display.language, {
-                                  timeZone: display.timezone,
-                                  hour12: display.hour12,
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
-                              </p>
-                            </div>
+                        <div className="rounded-xl border border-border p-4">
+                          <div className="flex items-center justify-between">
+                            <span className="label">FALLBACK SCENE</span>
+                            <ShieldCheck size={14} className="text-primary" />
                           </div>
-                        ))}
-                      {!data.events.some((e) => e.channelId === channel.id) && (
-                        <p className="text-xs leading-relaxed text-muted-foreground py-4">
-                          A quiet control room. Session events will appear here when you go live.
-                        </p>
-                      )}
-                    </div>
-                  </section>
-                </div>
+                          <p className="mt-4 text-sm truncate">{channel.sceneTitle}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Auto-end after {channel.graceSeconds}s without input
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-4"
+                            disabled={active}
+                            onClick={() => open('scene')}
+                          >
+                            <Video size={12} />
+                            Edit scene
+                          </Button>
+                        </div>
+                      </div>
+                    </section>
+                    <section className="surface p-5">
+                      {panelHeader('Activity', 'The latest from your channel.')}
+                      <div className="space-y-4 max-h-52 overflow-auto">
+                        {data.events
+                          .filter((e) => e.channelId === channel.id)
+                          .slice(0, 8)
+                          .map((e) => (
+                            <div key={e.id} className="flex gap-3">
+                              <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary/50" />
+                              <div>
+                                <p className="text-xs leading-relaxed">{e.message}</p>
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  {new Date(e.createdAt).toLocaleTimeString(display.language, {
+                                    timeZone: display.timezone,
+                                    hour12: display.hour12,
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        {!data.events.some((e) => e.channelId === channel.id) && (
+                          <p className="text-xs leading-relaxed text-muted-foreground py-4">
+                            A quiet control room. Session events will appear here when you go live.
+                          </p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                )}
               </>
             )}
           </>
         )}
         {view === 'Destinations' && (
-          <section className="surface p-6">
+          <section className="surface p-4 sm:p-6">
             {panelHeader(
               'Broadcast destinations',
               `${data.destinations.length} connections across your workspace`,
@@ -1116,7 +1478,7 @@ export function Dashboard() {
                       open('scene');
                     }}
                   >
-                    Edit scene
+                    Edit BRB for {c.name}
                   </Button>
                 </div>
               </div>
@@ -1129,8 +1491,67 @@ export function Dashboard() {
           </div>
         )}
         {view === 'Nodes' && (
-          <section className="surface overflow-hidden">
-            <div className="overflow-x-auto">
+          <section className="surface overflow-x-auto">
+            <div className="divide-y divide-border md:hidden">
+              {data.servers.map((s) => (
+                <div key={s.id} className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{s.name}</p>
+                      <p className="mt-1 break-all text-xs text-muted-foreground">{s.host}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{s.region}</p>
+                    </div>
+                    <Status
+                      state={
+                        online(s.heartbeatAt)
+                          ? 'online'
+                          : nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete'
+                            ? nodeJobs.get(s.id)!.status.replaceAll('_', ' ')
+                            : 'offline'
+                      }
+                    />
+                  </div>
+                  {!online(s.heartbeatAt) && (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {s.heartbeatAt
+                        ? `Last seen ${new Date(s.heartbeatAt).toLocaleString()}. The worker is not connected.`
+                        : 'No heartbeat yet. The worker has not connected to this manager.'}
+                    </p>
+                  )}
+                  <button
+                    className="flex min-h-10 items-center gap-2 font-mono text-xs text-muted-foreground"
+                    onClick={() => void copy(s.id)}
+                  >
+                    Copy node ID <Clipboard size={13} />
+                  </button>
+                  {admin && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => {
+                          setPendingServer(s);
+                          open('editNode');
+                        }}
+                      >
+                        Edit host
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        aria-label={`Permanently remove ${s.name}`}
+                        onClick={() => setRemovalNode(s)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {!data.servers.length && (
+                <p className="p-8 text-center text-sm text-muted-foreground">No nodes yet.</p>
+              )}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
               <Table aria-label="Media nodes">
                 <TableHeader>
                   <TableRow>
@@ -1142,12 +1563,19 @@ export function Dashboard() {
                 <TableBody>
                   {data.servers.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell>
+                      <TableCell className="min-w-64 whitespace-normal">
                         <div className="flex items-center gap-3">
                           <ServerIcon size={18} className="text-muted-foreground" />
                           <div>
                             <p className="text-sm">{s.name}</p>
                             <p className="text-xs text-muted-foreground mt-1">{s.host}</p>
+                            {!online(s.heartbeatAt) && (
+                              <p className="mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+                                {s.heartbeatAt
+                                  ? `Last seen ${new Date(s.heartbeatAt).toLocaleString()}. The worker is not connected.`
+                                  : 'No heartbeat yet. The worker has not connected to this manager.'}
+                              </p>
+                            )}
                             {nodeJobs.get(s.id) && nodeJobs.get(s.id)?.status !== 'complete' && (
                               <p className="mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground">
                                 {nodeJobs.get(s.id)?.status === 'draft'
@@ -1203,6 +1631,19 @@ export function Dashboard() {
                         )}
                         {admin && (
                           <Button
+                            variant="outline"
+                            size="sm"
+                            className="ml-2"
+                            onClick={() => {
+                              setPendingServer(s);
+                              open('editNode');
+                            }}
+                          >
+                            Edit host
+                          </Button>
+                        )}
+                        {admin && (
+                          <Button
                             variant="destructive"
                             size="icon"
                             className="ml-2"
@@ -1230,7 +1671,8 @@ export function Dashboard() {
             <div className="p-5 bg-muted/20 text-xs text-muted-foreground flex items-start gap-2">
               <CircleHelp size={15} className="shrink-0" />
               Installation runs in the background. Resume any setup to see its current step and
-              logs. Each Docker host can have one managed node.
+              logs. Each Docker host can have one managed node. Edit host changes the address
+              phones copy into Moblin. It does not install a node or move the worker.
             </div>
           </section>
         )}
@@ -1317,10 +1759,26 @@ export function Dashboard() {
           {modal && (
             <>
               <DialogTitle className="pr-7 text-xl font-medium tracking-tight">
-                {titles[modal][0]}
+                {modal === 'deleteDestination' && pendingDestination
+                  ? `Remove ${pendingDestination.name}?`
+                  : modal === 'deleteChannel'
+                    ? `Delete ${data.channels.find((item) => item.id === selected)?.name ?? 'this channel'}?`
+                    : modal === 'scene' && channel
+                      ? `BRB scene for ${channel.name}`
+                      : modal === 'editNode' && pendingServer
+                        ? `Host for ${pendingServer.name}`
+                        : modal === 'editDestination' && editingDestination
+                          ? editingDestination.name
+                          : titles[modal][0]}
               </DialogTitle>
               <DialogDescription className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {titles[modal][1]}
+                {modal === 'scene' && channel
+                  ? `Viewers of ${channel.name} see this while the connection recovers.`
+                  : modal === 'deleteDestination' && pendingDestination
+                    ? `The relay stops sending to ${pendingDestination.name}. This does not end the broadcast on the provider.`
+                    : modal === 'deleteChannel'
+                      ? `Permanently delete ${data.channels.find((item) => item.id === selected)?.name ?? 'this channel'}, its destinations, credentials, and activity.`
+                      : titles[modal][1]}
               </DialogDescription>
               {error && (
                 <p
@@ -1330,59 +1788,162 @@ export function Dashboard() {
                   {error}
                 </p>
               )}
-              {modal === 'credentials' && credentials ? (
-                <div className="space-y-4 mt-6">
-                  <div className="rounded-lg border border-border p-3 font-mono text-[11px] break-all select-all space-y-3">
-                    <p className="text-muted-foreground">RTMP endpoint</p>
-                    <p>rtmp://{credentials.host}:1935</p>
-                    <p className="text-muted-foreground">RTMP stream key</p>
-                    <p>
-                      {credentials.path}?user={credentials.username}&amp;pass={credentials.key}
-                    </p>
-                    <p className="text-muted-foreground">SRT URL</p>
-                    <p>
-                      srt://{credentials.host}:8890?streamid=publish:{credentials.path}:
-                      {credentials.username}:{credentials.key}
-                    </p>
-                    <p className="text-muted-foreground">SRTLA receiver</p>
-                    <p>{credentials.host}:5000 · Use the same SRT stream ID above.</p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() =>
-                      void copy(
-                        `srt://${credentials.host}:8890?streamid=publish:${credentials.path}:${credentials.username}:${credentials.key}`,
-                      )
-                    }
-                  >
-                    <Clipboard size={14} />
-                    Copy SRT URL
+              {modal === 'credentials' && credentials
+                ? (() => {
+                    const guide = encoderGuide(credentials, ingestProtocol);
+                    return (
+                      <div className="mt-6 space-y-4">
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {guide.hostNote}
+                        </p>
+                        {guide.connection.localOnly && admin && server && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setPendingServer(server);
+                              setModal('editNode');
+                            }}
+                          >
+                            Edit node host
+                          </Button>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {(['srtla', 'srt', 'rtmp'] as const).map((protocol) => (
+                            <Button
+                              key={protocol}
+                              type="button"
+                              size="sm"
+                              variant={ingestProtocol === protocol ? 'default' : 'outline'}
+                              onClick={() => setIngestProtocol(protocol)}
+                            >
+                              {protocol.toUpperCase()}
+                              {channel?.protocol === protocol ? ' · preferred' : ''}
+                            </Button>
+                          ))}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setRevealSecrets((value) => !value)}
+                          >
+                            {revealSecrets ? 'Hide secrets' : 'Show secrets'}
+                          </Button>
+                        </div>
+                        <CopyValue
+                          label={`${ingestProtocol.toUpperCase()} URL`}
+                          value={guide.url}
+                          hint={guide.urlHint}
+                          secret
+                          revealed={revealSecrets}
+                          onCopy={(value) => void copy(value)}
+                        />
+                        {guide.parts.map((field) => (
+                          <CopyValue
+                            key={field.label}
+                            label={field.label}
+                            value={field.value}
+                            hint={field.hint}
+                            secret={field.secret}
+                            revealed={revealSecrets}
+                            onCopy={(value) => void copy(value)}
+                          />
+                        ))}
+                        {confirmRotate ? (
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              className="flex-1"
+                              onClick={() => setConfirmRotate(false)}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              className="flex-1"
+                              disabled={active || busy || !admin}
+                              onClick={async () => {
+                                if (await command({ action: 'rotateKey', channelId: channel?.id })) {
+                                  setModal(null);
+                                  setCredentials(null);
+                                  setConfirmRotate(false);
+                                  toast.success(
+                                    'Ingest key rotated. Reopen connection details for the new key.',
+                                  );
+                                }
+                              }}
+                            >
+                              Confirm rotation
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="destructive"
+                            className="w-full"
+                            disabled={active || busy || !admin}
+                            onClick={() => setConfirmRotate(true)}
+                          >
+                            Rotate ingest key
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })()
+                : modal === 'deleteDestination' && pendingDestination ? (
+                <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModal(null)}>
+                    Cancel
                   </Button>
                   <Button
                     variant="destructive"
-                    className="w-full"
-                    disabled={active || busy || !admin}
+                    className="w-full whitespace-normal sm:w-auto"
+                    disabled={busy}
                     onClick={async () => {
-                      if (await command({ action: 'rotateKey', channelId: channel?.id })) {
+                      if (
+                        await command({
+                          action: 'deleteDestination',
+                          channelId: pendingDestination.channelId,
+                          destinationId: pendingDestination.id,
+                        })
+                      ) {
+                        setPendingDestination(null);
                         setModal(null);
-                        setCredentials(null);
-                        toast.success(
-                          'Ingest key rotated. Reopen connection details for the new key.',
-                        );
                       }
                     }}
                   >
-                    Rotate ingest key
+                    Remove {pendingDestination.name}
+                  </Button>
+                </div>
+              ) : modal === 'deleteChannel' ? (
+                <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModal(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="w-full whitespace-normal sm:w-auto"
+                    disabled={
+                      busy || !data.channels.some((c) => c.id === selected && canDeleteChannel(c))
+                    }
+                    onClick={async () => {
+                      if (await command({ action: 'deleteChannel', channelId: selected })) {
+                        setModal(null);
+                        setSelected('');
+                        router.replace('/?view=channels', { scroll: false });
+                      }
+                    }}
+                  >
+                    Delete {data.channels.find((item) => item.id === selected)?.name ?? 'channel'}
                   </Button>
                 </div>
               ) : modal === 'stop' ? (
-                <div className="flex justify-end gap-3 mt-7">
-                  <Button variant="outline" onClick={() => setModal(null)}>
+                <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModal(null)}>
                     Keep streaming
                   </Button>
                   <Button
                     variant="destructive"
+                    className="w-full whitespace-normal sm:w-auto"
                     disabled={busy}
                     onClick={async () => {
                       if (await command({ action: 'stop', channelId: channel?.id })) {
@@ -1395,7 +1956,11 @@ export function Dashboard() {
                   </Button>
                 </div>
               ) : (
-                <form onSubmit={submit} className="mt-6 space-y-4">
+                <form
+                  key={`${modal}:${editingDestination?.id ?? ''}:${pendingServer?.id ?? ''}:${channel?.id ?? ''}`}
+                  onSubmit={submit}
+                  className="mt-6 space-y-4"
+                >
                   {modal === 'channel' && (
                     <>
                       <Field title="Channel name">
@@ -1412,6 +1977,7 @@ export function Dashboard() {
                           {data.servers.map((s) => (
                             <option value={s.id} key={s.id}>
                               {s.name}
+                              {online(s.heartbeatAt) ? '' : ' (offline)'}
                             </option>
                           ))}
                         </select>
@@ -1428,12 +1994,45 @@ export function Dashboard() {
                       </Field>
                     </>
                   )}
-                  {modal === 'destination' && (
+                  {(modal === 'destination' || modal === 'editDestination') && (
                     <>
+                      {modal === 'editDestination' ? (
+                        <p className="text-xs text-muted-foreground">
+                          Channel:{' '}
+                          {data.channels.find((item) => item.id === editingDestination?.channelId)
+                            ?.name ?? 'This channel'}
+                        </p>
+                      ) : (
+                        (data?.channels.length ?? 0) > 1 && (
+                          <Field title="Channel">
+                            <select
+                              name="channelId"
+                              defaultValue={channel?.id ?? data?.channels[0]?.id}
+                            >
+                              {data?.channels.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.name}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                        )
+                      )}
                       <Field title="Destination name">
                         <Input
                           name="name"
-                          placeholder="My Twitch channel"
+                          defaultValue={
+                            modal === 'editDestination' ? editingDestination?.name : undefined
+                          }
+                          placeholder={
+                            provider === 'youtube'
+                              ? 'My YouTube channel'
+                              : provider === 'kick'
+                                ? 'My Kick channel'
+                                : provider === 'custom'
+                                  ? 'My RTMP destination'
+                                  : 'My Twitch channel'
+                          }
                           required
                           maxLength={80}
                         />
@@ -1455,22 +2054,41 @@ export function Dashboard() {
                         hint="Use the ingest URL from your provider’s streaming dashboard."
                       >
                         <Input
-                          key={provider}
+                          key={modal === 'editDestination' ? editingDestination?.id : provider}
                           name="url"
-                          placeholder="rtmps://your-provider.example/app"
+                          defaultValue={
+                            modal === 'editDestination' ? editingDestination?.url : undefined
+                          }
+                          placeholder={
+                            provider === 'twitch'
+                              ? 'rtmp://live.twitch.tv/app'
+                              : provider === 'youtube'
+                                ? 'rtmp://a.rtmp.youtube.com/live2'
+                                : provider === 'kick'
+                                  ? 'rtmps://fa723fc1b171.global-contribute.live-video.net/app'
+                                  : 'rtmps://your-provider.example/app'
+                          }
                           required
                         />
                       </Field>
                       <Field
                         title="Stream key"
-                        hint="Encrypted at rest. Keys are never returned to the dashboard."
+                        hint={
+                          modal === 'editDestination'
+                            ? 'Leave this blank to keep the saved key. Keys are never shown again.'
+                            : 'Encrypted at rest. Keys are never returned to the dashboard.'
+                        }
                       >
                         <Input
                           name="key"
                           type="password"
                           autoComplete="off"
-                          placeholder="Your private stream key"
-                          required
+                          placeholder={
+                            modal === 'editDestination'
+                              ? 'Saved key stays unless you replace it'
+                              : 'Your private stream key'
+                          }
+                          required={modal === 'destination'}
                         />
                       </Field>
                       {provider === 'youtube' && (
@@ -1485,6 +2103,32 @@ export function Dashboard() {
                           about a minute to end after the relay disconnects.
                         </label>
                       )}
+                    </>
+                  )}
+                  {modal === 'editNode' && pendingServer && (
+                    <>
+                      <Field title="Node name">
+                        <Input name="name" defaultValue={pendingServer.name} required maxLength={80} />
+                      </Field>
+                      <Field
+                        title="Address phones use"
+                        hint="A hostname or IPv4 address the phone can reach. Saving this updates the URLs in Connection details. It does not move the worker."
+                      >
+                        <Input
+                          name="host"
+                          defaultValue={pendingServer.host}
+                          required
+                          pattern="[a-zA-Z0-9.-]+"
+                        />
+                      </Field>
+                      <Field title="Region">
+                        <Input
+                          name="region"
+                          defaultValue={pendingServer.region}
+                          required
+                          maxLength={60}
+                        />
+                      </Field>
                     </>
                   )}
                   {modal === 'scene' && channel && (
@@ -1535,11 +2179,19 @@ export function Dashboard() {
                       </Field>
                     </>
                   )}
-                  <div className="pt-3 flex justify-end gap-3">
-                    <Button type="button" variant="outline" onClick={() => setModal(null)}>
+                  <div className="flex flex-col-reverse gap-3 pt-3 sm:flex-row sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full sm:w-auto"
+                      onClick={() => setModal(null)}
+                    >
                       Cancel
                     </Button>
-                    <Button disabled={busy || (modal === 'channel' && !data.servers.length)}>
+                    <Button
+                      className="w-full whitespace-normal sm:w-auto"
+                      disabled={busy || (modal === 'channel' && !data.servers.length)}
+                    >
                       {busy
                         ? 'Saving…'
                         : modal === 'channel'
@@ -1548,9 +2200,13 @@ export function Dashboard() {
                             ? 'Add node'
                             : modal === 'destination'
                               ? 'Add destination'
-                              : modal === 'member'
-                                ? 'Add teammate'
-                                : 'Save scene'}
+                              : modal === 'editDestination'
+                                ? 'Save destination'
+                                : modal === 'editNode'
+                                  ? 'Save host'
+                                  : modal === 'member'
+                                    ? 'Add teammate'
+                                    : 'Save BRB'}
                       <ArrowRight size={14} />
                     </Button>
                   </div>

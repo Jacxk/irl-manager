@@ -1,3 +1,4 @@
+import { publishIdentity } from '../src/lib/ingest';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
@@ -49,15 +50,18 @@ export async function remoteStore(nodeId: string): Promise<Store> {
     }
     try {
       const input = JSON.parse(body);
-      const c = channels.find((c) => input.path === `input_${c.id}`);
+      const publisher = publishIdentity(input);
+      const c = publisher
+        ? channels.find((c) => publisher.path === `input_${c.id}`)
+        : undefined;
       const allowed =
         Date.now() - lastContact < 30000 &&
         ((input.user === 'worker' &&
           equal(String(input.password ?? ''), process.env.MEDIA_WORKER_TOKEN ?? token)) ||
-          (input.action === 'publish' &&
+          (!!publisher &&
             !!c &&
-            input.user === c.id &&
-            equal(String(input.password ?? ''), c.ingestKey)));
+            publisher.user === c.id &&
+            equal(publisher.password, c.ingestKey)));
       res.writeHead(allowed ? 200 : 401).end();
     } catch {
       res.writeHead(401).end();
@@ -163,6 +167,9 @@ export async function remoteStore(nodeId: string): Promise<Store> {
     async channel(c, patch) {
       changes.push({
         type: 'channel',
+        receiveKbps: patch.receiveKbps,
+        sendKbps: patch.sendKbps,
+        telemetryAt: patch.telemetryAt?.toISOString(),
         id: c.id,
         sessionId: c.sessionId,
         state: patch.state,

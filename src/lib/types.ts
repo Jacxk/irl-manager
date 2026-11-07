@@ -18,6 +18,9 @@ export type Channel = {
   endedAt: string | null;
   endReason: string | null;
   lastFrameAt: string | null;
+  receiveKbps: number | null;
+  sendKbps: number | null;
+  telemetryAt: string | null;
 };
 export type Destination = {
   id: string;

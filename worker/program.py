@@ -8,12 +8,16 @@ import signal
 import sys
 import threading
 import time
+from timestamps import Stamp
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 Gst.init(None)
 config = json.loads(sys.stdin.readline())
 loop = GLib.MainLoop()
+received_bytes = 0
+previous_bytes = 0
+previous_measurement = time.monotonic()
 last_video = 0.0
 last_audio = 0.0
 stable_since = None
@@ -23,6 +27,8 @@ next_connect = 0.0
 force_fallback = bool(config.get('manual', False))
 fatal = False
 stopping = False
+video_stamp = Stamp()
+audio_stamp = Stamp()
 
 
 def emit(**values):
@@ -30,13 +36,14 @@ def emit(**values):
 
 
 # A decoder failure never changes the state of this persistent output pipeline.
+# Clock sync rewrites a burst onto one timestamp, and MediaMTX then closes the preview muxer.
 program = Gst.parse_launch('''
-    input-selector name=vsel sync-streams=true sync-mode=clock cache-buffers=true !
-      queue ! videoconvert ! video/x-raw,format=I420,width=1280,height=720,framerate=30/1 !
+    input-selector name=vsel sync-streams=true cache-buffers=true !
+      queue ! videoconvert ! videorate ! video/x-raw,format=I420,width=1280,height=720,framerate=30/1 !
       x264enc tune=zerolatency speed-preset=veryfast bitrate=4500 key-int-max=60 !
       h264parse config-interval=-1 ! queue ! mux.
-    input-selector name=asel sync-streams=true sync-mode=clock cache-buffers=true !
-      queue ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2 !
+    input-selector name=asel sync-streams=true cache-buffers=true !
+      queue ! audioconvert ! audioresample ! audiorate ! audio/x-raw,rate=48000,channels=2 !
       avenc_aac bitrate=128000 ! aacparse ! queue ! mux.
     flvmux name=mux streamable=true skip-backwards-streams=true ! queue ! rtmpsink name=output sync=false
     videotestsrc name=background is-live=true pattern=solid-color !
@@ -81,14 +88,18 @@ def on_sample(sink, kind):
         last_video = now
     else:
         last_audio = now
-    # Every reconnect gets a fresh decoder clock. Rebase raw frames onto the
-    # persistent program clock so switching cannot reset output timestamps.
+    # Every reconnect gets a fresh decoder clock. Keep source spacing, but never
+    # let a burst or a restart emit equal or backwards timestamps. FLV stores
+    # millisecond timestamps, and MediaMTX closes the preview muxer when they repeat.
     clock = program.get_clock()
     if clock is None:
         return Gst.FlowReturn.OK
     buf = sample.get_buffer().copy_deep()
-    buf.pts = max(0, clock.get_time() - program.get_base_time())
-    buf.dts = Gst.CLOCK_TIME_NONE
+    source_pts = None if buf.pts == Gst.CLOCK_TIME_NONE else int(buf.pts)
+    program_now = max(0, int(clock.get_time() - program.get_base_time()))
+    pts = (video_stamp if kind == 'video' else audio_stamp).apply(source_pts, program_now)
+    buf.pts = pts
+    buf.dts = pts
     program.get_by_name('livevideo' if kind == 'video' else 'liveaudio').emit('push-buffer', buf)
     return Gst.FlowReturn.OK
 
@@ -109,6 +120,8 @@ def reset_input(expected):
         return False
     select_live(False)
     decoder_pipeline = None
+    video_stamp.reset_source()
+    audio_stamp.reset_source()
     expected.set_state(Gst.State.NULL)
     bus = expected.get_bus()
     bus.remove_signal_watch()
@@ -138,7 +151,16 @@ def connect_input():
     decoder = source.get_by_name('decoder')
     decoder.set_property('uri', config['input'])
     decoder.connect('pad-added', on_pad)
+    def count_packet(_pad, info):
+        global received_bytes
+        buffer = info.get_buffer()
+        if buffer:
+            received_bytes += buffer.get_size()
+        return Gst.PadProbeReturn.OK
+    def watch_pad(_source, pad):
+        pad.add_probe(Gst.PadProbeType.BUFFER, count_packet)
     def setup(_decoder, element):
+        element.connect('pad-added', watch_pad)
         if element.find_property('latency'):
             element.set_property('latency', 200)
         if element.find_property('protocols'):
@@ -164,6 +186,7 @@ def output_message(_bus, msg):
 
 
 def tick():
+    global previous_bytes, previous_measurement
     now = time.monotonic()
     healthy = last_video > 0 and now - last_video < 2
     ready = healthy and stable_since is not None and now - stable_since >= 5
@@ -172,7 +195,9 @@ def tick():
         connect_input()
     elif decoder_pipeline and now - connection_started > 15 and (last_video < connection_started or now - last_video > 8):
         reset_input(decoder_pipeline)
-    emit(type='health', lastFrameAgeMs=int((now - last_video) * 1000) if last_video else None,
+    receive_kbps = round((received_bytes - previous_bytes) * 8 / max(now - previous_measurement, 0.001) / 1000)
+    previous_bytes, previous_measurement = received_bytes, now
+    emit(type='health', receiveKbps=receive_kbps, lastFrameAgeMs=int((now - last_video) * 1000) if last_video else None,
          stableForMs=int((now - stable_since) * 1000) if healthy and stable_since else 0,
          selected='live' if ready and not force_fallback else 'fallback')
     return True
