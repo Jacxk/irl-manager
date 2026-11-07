@@ -1,5 +1,5 @@
-import { removeNode } from './remove';
 import 'dotenv/config';
+import { removeNode } from './remove';
 import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import path from 'node:path';

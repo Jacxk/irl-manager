@@ -25,7 +25,7 @@ docker compose stop web installer     # stop the app and installer
 
 After code changes, rerun the first command to rebuild and restart the services. After editing `.env`, run `docker compose up -d web installer` to apply the new environment settings. Fresh setup still uses `npm run setup` to generate `.env` and `npm run db:push` to initialize the schema, as shown below.
 
-## Optional development outside Docker
+## Development with a local node
 
 Requires Node.js 22+, npm, and Docker Compose.
 
@@ -35,16 +35,14 @@ npm run setup
 docker compose up -d db
 npm run db:push
 npm run db:migrate-admin
-npm run dev
+npm run dev:stack
 ```
 
-Open [localhost:3000](http://localhost:3000) and sign in with **admin@example.test** / **test** (development only). The dev startup creates this account automatically; see [CONTRIBUTING.md](CONTRIBUTING.md). In a second terminal, start the durable installer:
-
-```sh
-npm run installer
-```
+Open [localhost:3000](http://localhost:3000) and sign in with **admin@example.test** / **test** (development only). The dev startup creates this account automatically; see [CONTRIBUTING.md](CONTRIBUTING.md). On later starts, use `npm run dev:stack` alone. It starts PostgreSQL, the hot-reloading web server, installer, and Moblin gateway. Stop any Docker web, installer, and Moblin services first with `docker compose stop web installer moblin`.
 
 In **Nodes → Add node**, choose **Install locally** or **Install on a remote server**. No manual node IDs or database configuration are needed for managed nodes. Keep `.env` private.
+
+The local node remains installed across restarts, and web changes do not require Docker rebuilds. Node worker changes still require updating its installed image; installer and Moblin changes require restarting the development stack. Ctrl+C stops the host processes but leaves PostgreSQL and node containers running. This developer startup uses existing instance policies and adds no administrative settings.
 
 ## Install locally
 
